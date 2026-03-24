@@ -350,6 +350,45 @@ catch (ConnectException ex)
 }
 ```
 
+## Validation
+
+connect-net includes built-in support for [protovalidate](https://github.com/bufbuild/protovalidate) — validate protobuf messages using constraints defined in `.proto` files.
+
+### Define constraints in your proto file
+
+```protobuf
+import "buf/validate/validate.proto";
+
+message CreateUserRequest {
+  string name = 1 [(buf.validate.field).string.min_len = 3];
+  string email = 2 [(buf.validate.field).string.email = true];
+  int32 age = 3 [(buf.validate.field).int32 = {gte: 0, lte: 150}];
+}
+```
+
+### Add the validation interceptor
+
+```csharp
+builder.Services.AddConnectServices(options =>
+{
+    options.Interceptors.Add(new ValidateInterceptor());
+});
+```
+
+Invalid requests automatically return `ConnectCode.InvalidArgument` with violation details.
+
+### Manual validation
+
+```csharp
+var validator = new ProtoValidator();
+var result = validator.Validate(message);
+if (!result.IsValid)
+{
+    foreach (var violation in result.Violations)
+        Console.WriteLine($"{violation.FieldPath}: {violation.Message}");
+}
+```
+
 ## Architecture
 
 | Package | Target | Description |
