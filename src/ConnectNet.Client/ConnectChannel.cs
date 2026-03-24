@@ -82,6 +82,11 @@ public class ConnectChannel
         CancellationToken ct)
         where TRes : IMessage<TRes>, new()
     {
+        if (options?.UseGet == true)
+        {
+            return await SendUnaryGetAsync<TRes>(procedure, request, options, ct).ConfigureAwait(false);
+        }
+
         var body = _codec.Serialize(request);
         var uri = new Uri(_baseUri, procedure);
 
@@ -156,6 +161,85 @@ public class ConnectChannel
         }
 
         return result;
+    }
+
+    private async Task<TRes> SendUnaryGetAsync<TRes>(
+        string procedure,
+        IMessage request,
+        CallOptions? options,
+        CancellationToken ct)
+        where TRes : IMessage<TRes>, new()
+    {
+        var body = _codec.Serialize(request);
+        var messageEncoded = Base64UrlEncode(body);
+
+        var uriBuilder = new UriBuilder(new Uri(_baseUri, procedure));
+        var query = $"encoding={Uri.EscapeDataString(_codec.Name)}&message={Uri.EscapeDataString(messageEncoded)}&base64=1&connect=v1";
+        uriBuilder.Query = query;
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Get, uriBuilder.Uri);
+
+        // Signal that we accept compressed responses
+        if (_channelOptions.AcceptCompression)
+        {
+            httpRequest.Headers.Add("Accept-Encoding", "gzip");
+        }
+
+        if (options?.Timeout is TimeSpan timeout)
+        {
+            httpRequest.Headers.Add("Connect-Timeout-Ms", ((long)timeout.TotalMilliseconds).ToString());
+        }
+
+        if (options?.Headers != null)
+        {
+            foreach (var header in options.Headers)
+            {
+                httpRequest.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+        }
+
+        var httpResponse = await _httpClient.SendAsync(httpRequest, ct).ConfigureAwait(false);
+
+        if (!httpResponse.IsSuccessStatusCode)
+        {
+            var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+            throw ConnectException.FromJson(errorBody);
+        }
+
+        var responseBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+        // Decompress response if Content-Encoding is gzip
+        var responseContentEncoding = httpResponse.Content.Headers.ContentEncoding.FirstOrDefault();
+        if (string.Equals(responseContentEncoding, "gzip", StringComparison.OrdinalIgnoreCase))
+        {
+            var decompressor = new GzipCompressor();
+            responseBytes = decompressor.Decompress(responseBytes);
+        }
+
+        var result = _codec.Deserialize<TRes>(responseBytes);
+
+        // Extract Trailer-* headers
+        if (options != null)
+        {
+            foreach (var header in httpResponse.Headers)
+            {
+                if (header.Key.StartsWith("Trailer-", StringComparison.OrdinalIgnoreCase))
+                {
+                    var trailerName = header.Key.Substring("Trailer-".Length);
+                    options.ResponseTrailers[trailerName] = string.Join(",", header.Value);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static string Base64UrlEncode(byte[] data)
+    {
+        return Convert.ToBase64String(data)
+            .Replace('+', '-')
+            .Replace('/', '_')
+            .TrimEnd('=');
     }
 
     public ClientStreamCall<TReq, TRes> ClientStreamAsync<TReq, TRes>(

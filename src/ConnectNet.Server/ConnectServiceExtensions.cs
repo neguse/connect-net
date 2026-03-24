@@ -55,6 +55,17 @@ public static class ConnectServiceExtensions
                         break;
                 }
             });
+
+            // Register GET route for unary methods (idempotent/safe RPCs)
+            if (method.MethodType == ConnectMethodType.Unary)
+            {
+                builder.MapGet(method.Procedure, async (HttpContext context) =>
+                {
+                    var service = context.RequestServices.GetRequiredService<TService>();
+                    var codec = context.RequestServices.GetRequiredService<ICodec>();
+                    await ConnectUnaryHandler.HandleGetAsync(context, method, service, codec);
+                });
+            }
         }
     }
 }
