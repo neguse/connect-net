@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ConnectNet.Server;
 
@@ -41,16 +42,26 @@ internal static class ConnectServerStreamHandler
             return;
         }
 
-        // Resolve compressor from DI (optional)
-        var compressor = httpContext.RequestServices.GetService(typeof(ICompressor)) as ICompressor;
+        // Resolve compressor registry from DI (optional)
+        var compressorRegistry = httpContext.RequestServices.GetService<ConnectCompressorRegistry>();
 
         // Check if client sends compressed envelopes
         request.Headers.TryGetValue("Connect-Content-Encoding", out var requestContentEncoding);
         var requestCompression = requestContentEncoding.FirstOrDefault();
 
-        // Check if client accepts compressed response envelopes
-        request.Headers.TryGetValue("Connect-Accept-Encoding", out var acceptEncodingValues);
-        var clientAcceptsGzip = acceptEncodingValues.Any(v => v != null && v.Contains("gzip", StringComparison.OrdinalIgnoreCase));
+        // Find a response compressor that the client accepts
+        ICompressor? responseCompressor = null;
+        if (request.Headers.TryGetValue("Connect-Accept-Encoding", out var acceptEncodingValues) && compressorRegistry != null)
+        {
+            foreach (var name in compressorRegistry.SupportedNames)
+            {
+                if (acceptEncodingValues.Any(v => v != null && v.Contains(name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    responseCompressor = compressorRegistry.Get(name);
+                    break;
+                }
+            }
+        }
 
         // Parse Connect-Timeout-Ms header
         CancellationTokenSource? timeoutCts = null;
@@ -83,11 +94,13 @@ internal static class ConnectServerStreamHandler
                 var (flags, data) = envelope.Value;
 
                 // Decompress request envelope if compressed
-                if ((flags & Envelope.FlagCompressed) != 0 &&
-                    string.Equals(requestCompression, "gzip", StringComparison.OrdinalIgnoreCase))
+                if ((flags & Envelope.FlagCompressed) != 0 && !string.IsNullOrEmpty(requestCompression))
                 {
-                    var gzip = compressor ?? (ICompressor)new GzipCompressor();
-                    data = gzip.Decompress(data);
+                    var decompressor = compressorRegistry?.Get(requestCompression!);
+                    if (decompressor != null)
+                    {
+                        data = decompressor.Decompress(data);
+                    }
                 }
 
                 requestMessage = codec.Deserialize(data, method.RequestParser);
@@ -105,9 +118,9 @@ internal static class ConnectServerStreamHandler
             response.ContentType = $"application/connect+{codec.Name}";
 
             // Indicate response compression
-            if (clientAcceptsGzip && compressor != null)
+            if (responseCompressor != null)
             {
-                response.Headers["Connect-Content-Encoding"] = "gzip";
+                response.Headers["Connect-Content-Encoding"] = responseCompressor.Name;
             }
 
             var context = new ConnectContext(cancellationToken: ct);
@@ -128,9 +141,9 @@ internal static class ConnectServerStreamHandler
                     var msgBytes = codec.Serialize(msg);
 
                     // Compress response envelope if client accepts
-                    if (clientAcceptsGzip && compressor != null)
+                    if (responseCompressor != null)
                     {
-                        msgBytes = compressor.Compress(msgBytes);
+                        msgBytes = responseCompressor.Compress(msgBytes);
                         await Envelope.WriteAsync(response.Body, Envelope.FlagCompressed, msgBytes, ct);
                     }
                     else

@@ -21,6 +21,12 @@ public static class ConnectServiceExtensions
         registry.Register(new JsonCodec());
         services.AddSingleton(registry);
         services.AddSingleton<ICodec>(sp => sp.GetRequiredService<ConnectCodecRegistry>().Default);
+
+        var compressorRegistry = new ConnectCompressorRegistry();
+        compressorRegistry.Register(new GzipCompressor());
+        compressorRegistry.Register(new DeflateCompressor());
+        services.AddSingleton(compressorRegistry);
+        // Keep existing ICompressor registration for backward compatibility
         services.AddSingleton<ICompressor, GzipCompressor>();
 
         var options = new ConnectServerOptions();

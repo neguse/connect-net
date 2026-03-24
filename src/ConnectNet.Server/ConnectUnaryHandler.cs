@@ -42,8 +42,8 @@ internal static class ConnectUnaryHandler
             return;
         }
 
-        // Resolve compressor from DI (optional)
-        var compressor = httpContext.RequestServices.GetService(typeof(ICompressor)) as ICompressor;
+        // Resolve compressor registry from DI (optional)
+        var compressorRegistry = httpContext.RequestServices.GetService<ConnectCompressorRegistry>();
 
         // Parse Connect-Timeout-Ms header
         CancellationTokenSource? timeoutCts = null;
@@ -64,18 +64,17 @@ internal static class ConnectUnaryHandler
             await request.Body.CopyToAsync(ms, ct);
             var requestBytes = ms.ToArray();
 
-            // Decompress request if Content-Encoding is gzip
-            if (request.Headers.TryGetValue("Content-Encoding", out var requestEncoding) &&
-                string.Equals(requestEncoding.FirstOrDefault(), "gzip", StringComparison.OrdinalIgnoreCase))
+            // Decompress request if Content-Encoding is set
+            if (request.Headers.TryGetValue("Content-Encoding", out var requestEncoding))
             {
-                if (compressor != null)
+                var encodingName = requestEncoding.FirstOrDefault();
+                if (!string.IsNullOrEmpty(encodingName))
                 {
-                    requestBytes = compressor.Decompress(requestBytes);
-                }
-                else
-                {
-                    var gzip = new GzipCompressor();
-                    requestBytes = gzip.Decompress(requestBytes);
+                    var decompressor = compressorRegistry?.Get(encodingName!);
+                    if (decompressor != null)
+                    {
+                        requestBytes = decompressor.Decompress(requestBytes);
+                    }
                 }
             }
 
@@ -126,13 +125,18 @@ internal static class ConnectUnaryHandler
 
             var responseBytes = codec.Serialize(responseMessage);
 
-            // Compress response if client accepts gzip
-            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding) &&
-                acceptEncoding.Any(v => v != null && v.Contains("gzip", StringComparison.OrdinalIgnoreCase)))
+            // Compress response if client accepts a supported encoding
+            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding) && compressorRegistry != null)
             {
-                var gzip = compressor ?? (ICompressor)new GzipCompressor();
-                responseBytes = gzip.Compress(responseBytes);
-                response.Headers["Content-Encoding"] = "gzip";
+                foreach (var name in compressorRegistry.SupportedNames)
+                {
+                    if (acceptEncoding.Any(v => v != null && v.Contains(name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        responseBytes = compressorRegistry.Get(name)!.Compress(responseBytes);
+                        response.Headers["Content-Encoding"] = name;
+                        break;
+                    }
+                }
             }
 
             await response.Body.WriteAsync(responseBytes, ct);
@@ -202,8 +206,8 @@ internal static class ConnectUnaryHandler
             return;
         }
 
-        // Resolve compressor from DI (optional)
-        var compressor = httpContext.RequestServices.GetService(typeof(ICompressor)) as ICompressor;
+        // Resolve compressor registry from DI (optional)
+        var compressorRegistry = httpContext.RequestServices.GetService<ConnectCompressorRegistry>();
 
         // Parse Connect-Timeout-Ms header
         CancellationTokenSource? timeoutCts = null;
@@ -234,10 +238,10 @@ internal static class ConnectUnaryHandler
             if (request.Query.TryGetValue("compression", out var compressionName) &&
                 !string.IsNullOrEmpty(compressionName))
             {
-                if (string.Equals(compressionName, "gzip", StringComparison.OrdinalIgnoreCase))
+                var decompressor = compressorRegistry?.Get(compressionName!);
+                if (decompressor != null)
                 {
-                    var gzip = compressor ?? (ICompressor)new GzipCompressor();
-                    requestBytes = gzip.Decompress(requestBytes);
+                    requestBytes = decompressor.Decompress(requestBytes);
                 }
             }
 
@@ -288,13 +292,18 @@ internal static class ConnectUnaryHandler
 
             var responseBytes = codec.Serialize(responseMessage);
 
-            // Compress response if client accepts gzip
-            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding) &&
-                acceptEncoding.Any(v => v != null && v.Contains("gzip", StringComparison.OrdinalIgnoreCase)))
+            // Compress response if client accepts a supported encoding
+            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding) && compressorRegistry != null)
             {
-                var gzip = compressor ?? (ICompressor)new GzipCompressor();
-                responseBytes = gzip.Compress(responseBytes);
-                response.Headers["Content-Encoding"] = "gzip";
+                foreach (var name in compressorRegistry.SupportedNames)
+                {
+                    if (acceptEncoding.Any(v => v != null && v.Contains(name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        responseBytes = compressorRegistry.Get(name)!.Compress(responseBytes);
+                        response.Headers["Content-Encoding"] = name;
+                        break;
+                    }
+                }
             }
 
             await response.Body.WriteAsync(responseBytes, ct);
