@@ -1,11 +1,14 @@
 using System.Collections.Generic;
 using Buf.Validate;
+using Google.Protobuf;
+using Google.Protobuf.Reflection;
 
 namespace ConnectNet.Validation.Rules;
 
 internal static class FieldRuleEvaluator
 {
-    public static void Evaluate(FieldRules rules, object? value, string path, List<Violation> violations)
+    public static void Evaluate(FieldRules rules, object? value, string path, List<Violation> violations,
+        FieldDescriptor? fieldDescriptor = null)
     {
         switch (rules.TypeCase)
         {
@@ -74,6 +77,23 @@ internal static class FieldRuleEvaluator
             case FieldRules.TypeOneofCase.Double:
                 if (value is double doubleValue)
                     NumericRuleEvaluator.EvaluateDouble(rules.Double, doubleValue, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Bool:
+                if (value is bool boolValue)
+                    BoolRuleEvaluator.Evaluate(rules.Bool, boolValue, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Bytes:
+                if (value is ByteString bytesValue)
+                    BytesRuleEvaluator.Evaluate(rules.Bytes, bytesValue, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Enum:
+                if (value is System.Enum enumObj)
+                    EnumRuleEvaluator.Evaluate(rules.Enum, System.Convert.ToInt32(enumObj), path, fieldDescriptor, violations);
+                else if (value is int enumValue)
+                    EnumRuleEvaluator.Evaluate(rules.Enum, enumValue, path, fieldDescriptor, violations);
                 break;
 
             case FieldRules.TypeOneofCase.Repeated:

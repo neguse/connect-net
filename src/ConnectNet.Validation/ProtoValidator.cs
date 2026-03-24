@@ -50,7 +50,7 @@ public class ProtoValidator
             // Evaluate type-specific rules via FieldRuleEvaluator
             if (value != null)
             {
-                FieldRuleEvaluator.Evaluate(rules, value, path, violations);
+                FieldRuleEvaluator.Evaluate(rules, value, path, violations, field);
             }
 
             // Recurse into nested messages
@@ -98,7 +98,7 @@ public class ProtoValidator
             FieldType.UInt64 or FieldType.Fixed64 => value is ulong ul && ul == 0,
             FieldType.Float => value is float f && f == 0f,
             FieldType.Double => value is double d && d == 0d,
-            FieldType.Enum => value is int e && e == 0,
+            FieldType.Enum => value is System.Enum enumVal && System.Convert.ToInt32(enumVal) == 0,
             FieldType.Message => false, // message presence is handled separately
             _ => false,
         };
