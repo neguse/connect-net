@@ -102,13 +102,27 @@ internal static class ConnectClientStreamHandler
                 response.Headers["Connect-Content-Encoding"] = responseCompressor.Name;
             }
 
-            var context = new ConnectContext(cancellationToken: ct);
+            var requestHeaders = new Dictionary<string, string>();
+            foreach (var header in request.Headers)
+            {
+                requestHeaders[header.Key] = header.Value.ToString();
+            }
+            var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
             ConnectException? streamError = null;
 
             try
             {
                 var requestStream = ReadRequestMessages(request.Body, method.RequestParser, codec, requestCompression, compressorRegistry, ct);
                 var result = await handler(service, requestStream, context);
+
+                // Write response headers from context before body
+                if (!response.HasStarted)
+                {
+                    foreach (var header in context.ResponseHeaders)
+                    {
+                        response.Headers[header.Key] = header.Value;
+                    }
+                }
 
                 // Write single response envelope
                 var responseBytes = codec.Serialize(result);
@@ -133,6 +147,15 @@ internal static class ConnectClientStreamHandler
             catch (Exception)
             {
                 streamError = new ConnectException(ConnectCode.Internal, "internal error");
+            }
+
+            // Write response headers on error path too
+            if (!response.HasStarted)
+            {
+                foreach (var header in context.ResponseHeaders)
+                {
+                    response.Headers[header.Key] = header.Value;
+                }
             }
 
             // Write EndStream envelope

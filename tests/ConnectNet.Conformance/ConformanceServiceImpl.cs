@@ -301,18 +301,25 @@ internal class ConformanceServiceImpl : ConformanceServiceBase
         _ => ConnectCode.Unknown,
     };
 
+    private static string StripTypeUrlPrefix(string typeUrl)
+    {
+        // Convert type.googleapis.com/some.Type to just some.Type
+        var slashIndex = typeUrl.LastIndexOf('/');
+        return slashIndex >= 0 ? typeUrl.Substring(slashIndex + 1) : typeUrl;
+    }
+
     private static ConnectException BuildError(Error error, ConformancePayload? payload = null)
     {
         var details = new List<ConnectErrorDetail>();
         foreach (var d in error.Details)
         {
-            details.Add(new ConnectErrorDetail(d.TypeUrl, d.Value.ToByteArray()));
+            details.Add(new ConnectErrorDetail(StripTypeUrlPrefix(d.TypeUrl), d.Value.ToByteArray()));
         }
         // Append RequestInfo to error details if payload is provided
         if (payload != null)
         {
             var requestInfoAny = Any.Pack(payload.RequestInfo);
-            details.Add(new ConnectErrorDetail(requestInfoAny.TypeUrl, requestInfoAny.Value.ToByteArray()));
+            details.Add(new ConnectErrorDetail(StripTypeUrlPrefix(requestInfoAny.TypeUrl), requestInfoAny.Value.ToByteArray()));
         }
         return new ConnectException(
             ConvertCode(error.Code),

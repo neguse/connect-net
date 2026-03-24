@@ -102,7 +102,12 @@ internal static class ConnectBidiStreamHandler
                 response.Headers["Connect-Content-Encoding"] = responseCompressor.Name;
             }
 
-            var context = new ConnectContext(cancellationToken: ct);
+            var requestHeaders = new Dictionary<string, string>();
+            foreach (var header in request.Headers)
+            {
+                requestHeaders[header.Key] = header.Value.ToString();
+            }
+            var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
             ConnectException? streamError = null;
 
             try
@@ -110,8 +115,19 @@ internal static class ConnectBidiStreamHandler
                 var requestStream = ReadRequestMessages(request.Body, method.RequestParser, codec, requestCompression, compressorRegistry, ct);
                 var responseStream = handler(service, requestStream, context);
 
+                bool headersFlushed = false;
                 await foreach (var msg in responseStream.WithCancellation(ct))
                 {
+                    // Write response headers from context before the first envelope
+                    if (!headersFlushed)
+                    {
+                        foreach (var header in context.ResponseHeaders)
+                        {
+                            response.Headers[header.Key] = header.Value;
+                        }
+                        headersFlushed = true;
+                    }
+
                     var msgBytes = codec.Serialize(msg);
                     if (responseCompressor != null)
                     {
@@ -123,6 +139,14 @@ internal static class ConnectBidiStreamHandler
                         await Envelope.WriteAsync(response.Body, 0x00, msgBytes, ct);
                     }
                     await response.Body.FlushAsync(ct);
+                }
+                // If no messages were yielded, still write headers
+                if (!headersFlushed)
+                {
+                    foreach (var header in context.ResponseHeaders)
+                    {
+                        response.Headers[header.Key] = header.Value;
+                    }
                 }
             }
             catch (ConnectException ex)
@@ -136,6 +160,15 @@ internal static class ConnectBidiStreamHandler
             catch (Exception)
             {
                 streamError = new ConnectException(ConnectCode.Internal, "internal error");
+            }
+
+            // Write response headers on error path if not already sent
+            if (!response.HasStarted)
+            {
+                foreach (var header in context.ResponseHeaders)
+                {
+                    response.Headers[header.Key] = header.Value;
+                }
             }
 
             // Write EndStream envelope

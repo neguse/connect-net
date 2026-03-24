@@ -14,11 +14,11 @@ public class ConnectServerOptions
 
 public static class ConnectServiceExtensions
 {
-    public static IServiceCollection AddConnectServices(this IServiceCollection services, Action<ConnectServerOptions>? configure = null)
+    public static IServiceCollection AddConnectServices(this IServiceCollection services, Action<ConnectServerOptions>? configure = null, Google.Protobuf.Reflection.TypeRegistry? typeRegistry = null)
     {
         var registry = new ConnectCodecRegistry();
         registry.Register(new ProtobufCodec());
-        registry.Register(new JsonCodec());
+        registry.Register(typeRegistry != null ? new JsonCodec(typeRegistry) : new JsonCodec());
         services.AddSingleton(registry);
         services.AddSingleton<ICodec>(sp => sp.GetRequiredService<ConnectCodecRegistry>().Default);
 
@@ -49,25 +49,39 @@ public static class ConnectServiceExtensions
         {
             builder.MapPost(method.Procedure, async (HttpContext context) =>
             {
-                var service = context.RequestServices.GetRequiredService<TService>();
-                var registry = context.RequestServices.GetRequiredService<ConnectCodecRegistry>();
-                var codec = ResolveCodecFromContentType(context.Request.ContentType, registry, method.MethodType);
-
-                switch (method.MethodType)
+                try
                 {
-                    case ConnectMethodType.ServerStreaming:
-                        await ConnectServerStreamHandler.HandleAsync(context, method, service, codec);
-                        break;
-                    case ConnectMethodType.ClientStreaming:
-                        await ConnectClientStreamHandler.HandleAsync(context, method, service, codec);
-                        break;
-                    case ConnectMethodType.BidiStreaming:
-                        await ConnectBidiStreamHandler.HandleAsync(context, method, service, codec);
-                        break;
-                    case ConnectMethodType.Unary:
-                    default:
-                        await ConnectUnaryHandler.HandleAsync(context, method, service, codec);
-                        break;
+                    var service = context.RequestServices.GetRequiredService<TService>();
+                    var registry = context.RequestServices.GetRequiredService<ConnectCodecRegistry>();
+                    var codec = ResolveCodecFromContentType(context.Request.ContentType, registry, method.MethodType);
+
+                    switch (method.MethodType)
+                    {
+                        case ConnectMethodType.ServerStreaming:
+                            await ConnectServerStreamHandler.HandleAsync(context, method, service, codec);
+                            break;
+                        case ConnectMethodType.ClientStreaming:
+                            await ConnectClientStreamHandler.HandleAsync(context, method, service, codec);
+                            break;
+                        case ConnectMethodType.BidiStreaming:
+                            await ConnectBidiStreamHandler.HandleAsync(context, method, service, codec);
+                            break;
+                        case ConnectMethodType.Unary:
+                        default:
+                            await ConnectUnaryHandler.HandleAsync(context, method, service, codec);
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (!context.Response.HasStarted)
+                    {
+                        context.Response.StatusCode = 500;
+                        context.Response.ContentType = "application/json";
+                        var error = new ConnectException(ConnectCode.Internal, "internal error");
+                        await context.Response.WriteAsync(error.ToJson());
+                    }
+                    // Exception already handled by inner handler
                 }
             });
 

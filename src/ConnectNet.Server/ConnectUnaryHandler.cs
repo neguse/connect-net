@@ -57,6 +57,14 @@ internal static class ConnectUnaryHandler
             ct = timeoutCts.Token;
         }
 
+        // Create context with request headers
+        var requestHeaders = new Dictionary<string, string>();
+        foreach (var header in request.Headers)
+        {
+            requestHeaders[header.Key] = header.Value.ToString();
+        }
+        var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
+
         try
         {
             // Read and deserialize request
@@ -79,14 +87,6 @@ internal static class ConnectUnaryHandler
             }
 
             var requestMessage = codec.Deserialize(requestBytes, method.RequestParser);
-
-            // Create context with request headers
-            var requestHeaders = new Dictionary<string, string>();
-            foreach (var header in request.Headers)
-            {
-                requestHeaders[header.Key] = header.Value.ToString();
-            }
-            var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
 
             // Invoke service method (with interceptor chain if configured)
             var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
@@ -117,7 +117,13 @@ internal static class ConnectUnaryHandler
             response.StatusCode = 200;
             response.ContentType = $"application/{codec.Name}";
 
-            // Write Trailer-* headers
+            // Write response headers
+            foreach (var header in context.ResponseHeaders)
+            {
+                response.Headers[header.Key] = header.Value;
+            }
+
+            // Write Trailer-* headers (Connect unary trailers)
             foreach (var trailer in context.ResponseTrailers)
             {
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
@@ -143,6 +149,7 @@ internal static class ConnectUnaryHandler
         }
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)
         {
+            WriteContextHeaders(response, context);
             response.StatusCode = 504;
             response.ContentType = "application/json";
             var error = new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded");
@@ -150,14 +157,19 @@ internal static class ConnectUnaryHandler
         }
         catch (ConnectException ex)
         {
+            WriteContextHeaders(response, context);
             response.StatusCode = ConnectException.ToHttpStatus(ex.Code);
             response.ContentType = "application/json";
             await response.WriteAsync(ex.ToJson());
         }
         catch (Exception)
         {
-            response.StatusCode = 500;
-            response.ContentType = "application/json";
+            WriteContextHeaders(response, context);
+            if (!response.HasStarted)
+            {
+                response.StatusCode = 500;
+                response.ContentType = "application/json";
+            }
             var error = new ConnectException(ConnectCode.Internal, "internal error");
             await response.WriteAsync(error.ToJson());
         }
@@ -221,6 +233,14 @@ internal static class ConnectUnaryHandler
             ct = timeoutCts.Token;
         }
 
+        // Create context with request headers
+        var getRequestHeaders = new Dictionary<string, string>();
+        foreach (var header in request.Headers)
+        {
+            getRequestHeaders[header.Key] = header.Value.ToString();
+        }
+        var getContext = new ConnectContext(requestHeaders: getRequestHeaders, cancellationToken: ct);
+
         try
         {
             // Decode message
@@ -247,21 +267,13 @@ internal static class ConnectUnaryHandler
 
             var requestMessage = codec.Deserialize(requestBytes, method.RequestParser);
 
-            // Create context with request headers
-            var requestHeaders = new Dictionary<string, string>();
-            foreach (var header in request.Headers)
-            {
-                requestHeaders[header.Key] = header.Value.ToString();
-            }
-            var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
-
             // Invoke service method (with interceptor chain if configured)
             var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
             IMessage responseMessage;
 
             if (serverOptions != null && serverOptions.Interceptors.Count > 0)
             {
-                var serverContext = new UnaryServerContext(method.Procedure, requestMessage, context);
+                var serverContext = new UnaryServerContext(method.Procedure, requestMessage, getContext);
 
                 Func<UnaryServerContext, Task<IMessage>> chain = async (ctx) =>
                     await method.Handler(service, ctx.Request, ctx.Context);
@@ -277,15 +289,21 @@ internal static class ConnectUnaryHandler
             }
             else
             {
-                responseMessage = await method.Handler(service, requestMessage, context);
+                responseMessage = await method.Handler(service, requestMessage, getContext);
             }
 
             // Write response
             response.StatusCode = 200;
             response.ContentType = $"application/{codec.Name}";
 
-            // Write Trailer-* headers
-            foreach (var trailer in context.ResponseTrailers)
+            // Write response headers
+            foreach (var header in getContext.ResponseHeaders)
+            {
+                response.Headers[header.Key] = header.Value;
+            }
+
+            // Write Trailer-* headers (Connect unary trailers)
+            foreach (var trailer in getContext.ResponseTrailers)
             {
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
             }
@@ -310,6 +328,7 @@ internal static class ConnectUnaryHandler
         }
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)
         {
+            WriteContextHeaders(response, getContext);
             response.StatusCode = 504;
             response.ContentType = "application/json";
             var error = new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded");
@@ -317,12 +336,14 @@ internal static class ConnectUnaryHandler
         }
         catch (ConnectException ex)
         {
+            WriteContextHeaders(response, getContext);
             response.StatusCode = ConnectException.ToHttpStatus(ex.Code);
             response.ContentType = "application/json";
             await response.WriteAsync(ex.ToJson());
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            WriteContextHeaders(response, getContext);
             response.StatusCode = 500;
             response.ContentType = "application/json";
             var error = new ConnectException(ConnectCode.Internal, "internal error");
@@ -331,6 +352,21 @@ internal static class ConnectUnaryHandler
         finally
         {
             timeoutCts?.Dispose();
+        }
+    }
+
+    private static void WriteContextHeaders(Microsoft.AspNetCore.Http.HttpResponse response, ConnectContext context)
+    {
+        if (!response.HasStarted)
+        {
+            foreach (var header in context.ResponseHeaders)
+            {
+                response.Headers[header.Key] = header.Value;
+            }
+            foreach (var trailer in context.ResponseTrailers)
+            {
+                response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
+            }
         }
     }
 

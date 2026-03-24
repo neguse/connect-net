@@ -33,7 +33,8 @@ public class ConnectException : Exception
             {
                 writer.WriteStartObject();
                 writer.WriteString("type", detail.Type);
-                writer.WriteString("value", Convert.ToBase64String(detail.Value));
+                // Connect protocol uses standard base64 encoding without padding
+                writer.WriteString("value", Base64EncodeUnpadded(detail.Value));
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
@@ -72,7 +73,7 @@ public class ConnectException : Exception
 
     public static int ToHttpStatus(ConnectCode code) => code switch
     {
-        ConnectCode.Canceled => 408,
+        ConnectCode.Canceled => 499,
         ConnectCode.Unknown => 500,
         ConnectCode.InvalidArgument => 400,
         ConnectCode.DeadlineExceeded => 504,
@@ -111,6 +112,11 @@ public class ConnectException : Exception
         ConnectCode.Unauthenticated => "unauthenticated",
         _ => "unknown",
     };
+
+    private static string Base64EncodeUnpadded(byte[] data)
+    {
+        return Convert.ToBase64String(data).TrimEnd('=');
+    }
 
     public static ConnectCode CodeFromString(string s) => s switch
     {

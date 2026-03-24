@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -123,7 +124,12 @@ internal static class ConnectServerStreamHandler
                 response.Headers["Connect-Content-Encoding"] = responseCompressor.Name;
             }
 
-            var context = new ConnectContext(cancellationToken: ct);
+            var requestHeaders = new Dictionary<string, string>();
+            foreach (var header in request.Headers)
+            {
+                requestHeaders[header.Key] = header.Value.ToString();
+            }
+            var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
             var handler = method.ServerStreamHandler;
             if (handler == null)
             {
@@ -136,8 +142,19 @@ internal static class ConnectServerStreamHandler
             ConnectException? streamError = null;
             try
             {
+                bool headersFlushed = false;
                 await foreach (var msg in handler(service, requestMessage, context).WithCancellation(ct))
                 {
+                    // Write response headers from context before the first envelope
+                    if (!headersFlushed)
+                    {
+                        foreach (var header in context.ResponseHeaders)
+                        {
+                            response.Headers[header.Key] = header.Value;
+                        }
+                        headersFlushed = true;
+                    }
+
                     var msgBytes = codec.Serialize(msg);
 
                     // Compress response envelope if client accepts
@@ -152,6 +169,14 @@ internal static class ConnectServerStreamHandler
                     }
                     await response.Body.FlushAsync(ct);
                 }
+                // If no messages were yielded, still write headers
+                if (!headersFlushed)
+                {
+                    foreach (var header in context.ResponseHeaders)
+                    {
+                        response.Headers[header.Key] = header.Value;
+                    }
+                }
             }
             catch (ConnectException ex)
             {
@@ -164,6 +189,15 @@ internal static class ConnectServerStreamHandler
             catch (Exception)
             {
                 streamError = new ConnectException(ConnectCode.Internal, "internal error");
+            }
+
+            // Write response headers on error path if not already sent
+            if (!response.HasStarted)
+            {
+                foreach (var header in context.ResponseHeaders)
+                {
+                    response.Headers[header.Key] = header.Value;
+                }
             }
 
             // Write EndStream envelope
