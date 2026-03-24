@@ -16,6 +16,66 @@ internal static class FieldRuleEvaluator
                 }
                 break;
 
+            case FieldRules.TypeOneofCase.Int32:
+                if (value is int int32Value)
+                    NumericRuleEvaluator.EvaluateInt32(rules.Int32, int32Value, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Int64:
+                if (value is long int64Value)
+                    NumericRuleEvaluator.EvaluateInt64(rules.Int64, int64Value, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Uint32:
+                if (value is uint uint32Value)
+                    NumericRuleEvaluator.EvaluateUInt32(rules.Uint32, uint32Value, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Uint64:
+                if (value is ulong uint64Value)
+                    NumericRuleEvaluator.EvaluateUInt64(rules.Uint64, uint64Value, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Sint32:
+                if (value is int sint32Value)
+                    NumericRuleEvaluator.EvaluateSInt32(rules.Sint32, sint32Value, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Sint64:
+                if (value is long sint64Value)
+                    NumericRuleEvaluator.EvaluateSInt64(rules.Sint64, sint64Value, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Fixed32:
+                if (value is uint fixed32Value)
+                    NumericRuleEvaluator.EvaluateFixed32(rules.Fixed32, fixed32Value, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Fixed64:
+                if (value is ulong fixed64Value)
+                    NumericRuleEvaluator.EvaluateFixed64(rules.Fixed64, fixed64Value, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Sfixed32:
+                if (value is int sfixed32Value)
+                    NumericRuleEvaluator.EvaluateSFixed32(rules.Sfixed32, sfixed32Value, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Sfixed64:
+                if (value is long sfixed64Value)
+                    NumericRuleEvaluator.EvaluateSFixed64(rules.Sfixed64, sfixed64Value, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Float:
+                if (value is float floatValue)
+                    NumericRuleEvaluator.EvaluateFloat(rules.Float, floatValue, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Double:
+                if (value is double doubleValue)
+                    NumericRuleEvaluator.EvaluateDouble(rules.Double, doubleValue, path, violations);
+                break;
+
             case FieldRules.TypeOneofCase.Repeated:
                 RepeatedRuleEvaluator.Evaluate(rules.Repeated, value, path, violations);
                 break;
