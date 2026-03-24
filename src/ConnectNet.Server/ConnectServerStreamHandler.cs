@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -39,6 +40,17 @@ internal static class ConnectServerStreamHandler
             return;
         }
 
+        // Resolve compressor from DI (optional)
+        var compressor = httpContext.RequestServices.GetService(typeof(ICompressor)) as ICompressor;
+
+        // Check if client sends compressed envelopes
+        request.Headers.TryGetValue("Connect-Content-Encoding", out var requestContentEncoding);
+        var requestCompression = requestContentEncoding.FirstOrDefault();
+
+        // Check if client accepts compressed response envelopes
+        request.Headers.TryGetValue("Connect-Accept-Encoding", out var acceptEncodingValues);
+        var clientAcceptsGzip = acceptEncodingValues.Any(v => v != null && v.Contains("gzip", StringComparison.OrdinalIgnoreCase));
+
         // Read request envelope
         Google.Protobuf.IMessage requestMessage;
         try
@@ -54,6 +66,15 @@ internal static class ConnectServerStreamHandler
             }
 
             var (flags, data) = envelope.Value;
+
+            // Decompress request envelope if compressed
+            if ((flags & Envelope.FlagCompressed) != 0 &&
+                string.Equals(requestCompression, "gzip", StringComparison.OrdinalIgnoreCase))
+            {
+                var gzip = compressor ?? (ICompressor)new GzipCompressor();
+                data = gzip.Decompress(data);
+            }
+
             requestMessage = codec.Deserialize(data, method.RequestParser);
         }
         catch (ConnectException ex)
@@ -67,6 +88,12 @@ internal static class ConnectServerStreamHandler
         // Set response headers before streaming
         response.StatusCode = 200;
         response.ContentType = $"application/connect+{codec.Name}";
+
+        // Indicate response compression
+        if (clientAcceptsGzip && compressor != null)
+        {
+            response.Headers["Connect-Content-Encoding"] = "gzip";
+        }
 
         var context = new ConnectContext(cancellationToken: httpContext.RequestAborted);
         var handler = method.ServerStreamHandler;
@@ -84,7 +111,17 @@ internal static class ConnectServerStreamHandler
             await foreach (var msg in handler(service, requestMessage, context).WithCancellation(httpContext.RequestAborted))
             {
                 var msgBytes = codec.Serialize(msg);
-                await Envelope.WriteAsync(response.Body, 0x00, msgBytes, httpContext.RequestAborted);
+
+                // Compress response envelope if client accepts
+                if (clientAcceptsGzip && compressor != null)
+                {
+                    msgBytes = compressor.Compress(msgBytes);
+                    await Envelope.WriteAsync(response.Body, Envelope.FlagCompressed, msgBytes, httpContext.RequestAborted);
+                }
+                else
+                {
+                    await Envelope.WriteAsync(response.Body, 0x00, msgBytes, httpContext.RequestAborted);
+                }
                 await response.Body.FlushAsync(httpContext.RequestAborted);
             }
         }

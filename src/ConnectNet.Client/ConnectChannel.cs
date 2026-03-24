@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
@@ -12,17 +13,25 @@ using Google.Protobuf;
 
 namespace ConnectNet.Client;
 
+public class ConnectChannelOptions
+{
+    public ICompressor? RequestCompressor { get; set; }
+    public bool AcceptCompression { get; set; } = true;
+}
+
 public class ConnectChannel
 {
     private readonly HttpClient _httpClient;
     private readonly Uri _baseUri;
     private readonly ICodec _codec;
+    private readonly ConnectChannelOptions _channelOptions;
 
-    public ConnectChannel(HttpClient httpClient, string baseUri, ICodec? codec = null)
+    public ConnectChannel(HttpClient httpClient, string baseUri, ICodec? codec = null, ConnectChannelOptions? channelOptions = null)
     {
         _httpClient = httpClient;
         _baseUri = new Uri(baseUri.TrimEnd('/'));
         _codec = codec ?? new ProtobufCodec();
+        _channelOptions = channelOptions ?? new ConnectChannelOptions();
     }
 
     public async Task<TRes> UnaryAsync<TReq, TRes>(
@@ -37,9 +46,28 @@ public class ConnectChannel
         var uri = new Uri(_baseUri, procedure);
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, uri);
-        httpRequest.Content = new ByteArrayContent(body);
-        httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue($"application/{_codec.Name}");
+
+        // Compress request if compressor is configured
+        if (_channelOptions.RequestCompressor != null)
+        {
+            body = _channelOptions.RequestCompressor.Compress(body);
+            httpRequest.Content = new ByteArrayContent(body);
+            httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue($"application/{_codec.Name}");
+            httpRequest.Content.Headers.Add("Content-Encoding", _channelOptions.RequestCompressor.Name);
+        }
+        else
+        {
+            httpRequest.Content = new ByteArrayContent(body);
+            httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue($"application/{_codec.Name}");
+        }
+
         httpRequest.Headers.Add("Connect-Protocol-Version", "1");
+
+        // Signal that we accept compressed responses
+        if (_channelOptions.AcceptCompression)
+        {
+            httpRequest.Headers.Add("Accept-Encoding", "gzip");
+        }
 
         if (options?.Timeout is TimeSpan timeout)
         {
@@ -63,6 +91,15 @@ public class ConnectChannel
         }
 
         var responseBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+
+        // Decompress response if Content-Encoding is gzip
+        var responseContentEncoding = httpResponse.Content.Headers.ContentEncoding.FirstOrDefault();
+        if (string.Equals(responseContentEncoding, "gzip", StringComparison.OrdinalIgnoreCase))
+        {
+            var decompressor = new GzipCompressor();
+            responseBytes = decompressor.Decompress(responseBytes);
+        }
+
         var result = _codec.Deserialize<TRes>(responseBytes);
 
         // Extract Trailer-* headers
@@ -110,14 +147,31 @@ public class ConnectChannel
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, uri);
 
-        // Wrap request in envelope
+        // Wrap request in envelope, compressing if configured
+        byte envelopeFlags = 0x00;
+        if (_channelOptions.RequestCompressor != null)
+        {
+            requestBytes = _channelOptions.RequestCompressor.Compress(requestBytes);
+            envelopeFlags = Envelope.FlagCompressed;
+        }
+
         using var envelopeStream = new MemoryStream();
-        await Envelope.WriteAsync(envelopeStream, 0x00, requestBytes, ct).ConfigureAwait(false);
+        await Envelope.WriteAsync(envelopeStream, envelopeFlags, requestBytes, ct).ConfigureAwait(false);
         var envelopeBytes = envelopeStream.ToArray();
 
         httpRequest.Content = new ByteArrayContent(envelopeBytes);
         httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue($"application/connect+{_codec.Name}");
         httpRequest.Headers.Add("Connect-Protocol-Version", "1");
+
+        // Set streaming compression headers
+        if (_channelOptions.RequestCompressor != null)
+        {
+            httpRequest.Headers.Add("Connect-Content-Encoding", _channelOptions.RequestCompressor.Name);
+        }
+        if (_channelOptions.AcceptCompression)
+        {
+            httpRequest.Headers.Add("Connect-Accept-Encoding", "gzip");
+        }
 
         if (options?.Timeout is TimeSpan timeout)
         {
@@ -139,6 +193,10 @@ public class ConnectChannel
             var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
             throw ConnectException.FromJson(errorBody);
         }
+
+        // Check if server is sending compressed envelopes
+        httpResponse.Headers.TryGetValues("Connect-Content-Encoding", out var connectContentEncodings);
+        var serverCompression = connectContentEncodings?.FirstOrDefault();
 
         using var responseStream = await httpResponse.Content.ReadAsStreamAsync().ConfigureAwait(false);
 
@@ -168,6 +226,14 @@ public class ConnectChannel
 
                 // Success — done streaming
                 yield break;
+            }
+
+            // Decompress if flag indicates compression
+            if ((flags & Envelope.FlagCompressed) != 0 &&
+                string.Equals(serverCompression, "gzip", StringComparison.OrdinalIgnoreCase))
+            {
+                var decompressor = new GzipCompressor();
+                data = decompressor.Decompress(data);
             }
 
             // Normal message envelope

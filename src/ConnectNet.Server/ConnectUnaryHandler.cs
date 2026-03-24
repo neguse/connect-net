@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 
@@ -37,12 +38,31 @@ internal static class ConnectUnaryHandler
             return;
         }
 
+        // Resolve compressor from DI (optional)
+        var compressor = httpContext.RequestServices.GetService(typeof(ICompressor)) as ICompressor;
+
         try
         {
             // Read and deserialize request
             using var ms = new MemoryStream();
             await request.Body.CopyToAsync(ms);
             var requestBytes = ms.ToArray();
+
+            // Decompress request if Content-Encoding is gzip
+            if (request.Headers.TryGetValue("Content-Encoding", out var requestEncoding) &&
+                string.Equals(requestEncoding.FirstOrDefault(), "gzip", StringComparison.OrdinalIgnoreCase))
+            {
+                if (compressor != null)
+                {
+                    requestBytes = compressor.Decompress(requestBytes);
+                }
+                else
+                {
+                    var gzip = new GzipCompressor();
+                    requestBytes = gzip.Decompress(requestBytes);
+                }
+            }
+
             var requestMessage = codec.Deserialize(requestBytes, method.RequestParser);
 
             // Create context
@@ -62,6 +82,16 @@ internal static class ConnectUnaryHandler
             }
 
             var responseBytes = codec.Serialize(responseMessage);
+
+            // Compress response if client accepts gzip
+            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding) &&
+                acceptEncoding.Any(v => v != null && v.Contains("gzip", StringComparison.OrdinalIgnoreCase)))
+            {
+                var gzip = compressor ?? (ICompressor)new GzipCompressor();
+                responseBytes = gzip.Compress(responseBytes);
+                response.Headers["Content-Encoding"] = "gzip";
+            }
+
             await response.Body.WriteAsync(responseBytes);
         }
         catch (ConnectException ex)

@@ -10,6 +10,7 @@ public static class ConnectServiceExtensions
     public static IServiceCollection AddConnectServices(this IServiceCollection services)
     {
         services.AddSingleton<ICodec, ProtobufCodec>();
+        services.AddSingleton<ICompressor, GzipCompressor>();
         return services;
     }
 
