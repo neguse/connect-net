@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 
@@ -51,93 +52,124 @@ internal static class ConnectServerStreamHandler
         request.Headers.TryGetValue("Connect-Accept-Encoding", out var acceptEncodingValues);
         var clientAcceptsGzip = acceptEncodingValues.Any(v => v != null && v.Contains("gzip", StringComparison.OrdinalIgnoreCase));
 
-        // Read request envelope
-        Google.Protobuf.IMessage requestMessage;
+        // Parse Connect-Timeout-Ms header
+        CancellationTokenSource? timeoutCts = null;
+        var ct = httpContext.RequestAborted;
+
+        if (request.Headers.TryGetValue("Connect-Timeout-Ms", out var timeoutStr) &&
+            long.TryParse(timeoutStr, out var timeoutMs) && timeoutMs > 0)
+        {
+            timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
+            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
+            ct = timeoutCts.Token;
+        }
+
         try
         {
-            var envelope = await Envelope.ReadAsync(request.Body, httpContext.RequestAborted);
-            if (envelope == null)
+            // Read request envelope
+            Google.Protobuf.IMessage requestMessage;
+            try
             {
-                response.StatusCode = 400;
+                var envelope = await Envelope.ReadAsync(request.Body, ct);
+                if (envelope == null)
+                {
+                    response.StatusCode = 400;
+                    response.ContentType = "application/json";
+                    var error = new ConnectException(ConnectCode.InvalidArgument, "empty request body");
+                    await response.WriteAsync(error.ToJson());
+                    return;
+                }
+
+                var (flags, data) = envelope.Value;
+
+                // Decompress request envelope if compressed
+                if ((flags & Envelope.FlagCompressed) != 0 &&
+                    string.Equals(requestCompression, "gzip", StringComparison.OrdinalIgnoreCase))
+                {
+                    var gzip = compressor ?? (ICompressor)new GzipCompressor();
+                    data = gzip.Decompress(data);
+                }
+
+                requestMessage = codec.Deserialize(data, method.RequestParser);
+            }
+            catch (ConnectException ex)
+            {
+                response.StatusCode = ConnectException.ToHttpStatus(ex.Code);
                 response.ContentType = "application/json";
-                var error = new ConnectException(ConnectCode.InvalidArgument, "empty request body");
-                await response.WriteAsync(error.ToJson());
+                await response.WriteAsync(ex.ToJson());
                 return;
             }
 
-            var (flags, data) = envelope.Value;
+            // Set response headers before streaming
+            response.StatusCode = 200;
+            response.ContentType = $"application/connect+{codec.Name}";
 
-            // Decompress request envelope if compressed
-            if ((flags & Envelope.FlagCompressed) != 0 &&
-                string.Equals(requestCompression, "gzip", StringComparison.OrdinalIgnoreCase))
+            // Indicate response compression
+            if (clientAcceptsGzip && compressor != null)
             {
-                var gzip = compressor ?? (ICompressor)new GzipCompressor();
-                data = gzip.Decompress(data);
+                response.Headers["Connect-Content-Encoding"] = "gzip";
             }
 
-            requestMessage = codec.Deserialize(data, method.RequestParser);
-        }
-        catch (ConnectException ex)
-        {
-            response.StatusCode = ConnectException.ToHttpStatus(ex.Code);
-            response.ContentType = "application/json";
-            await response.WriteAsync(ex.ToJson());
-            return;
-        }
+            var context = new ConnectContext(cancellationToken: ct);
+            var handler = method.ServerStreamHandler;
+            if (handler == null)
+            {
+                var endStreamError = BuildEndStreamJson(null, context);
+                await Envelope.WriteAsync(response.Body, Envelope.FlagEndStream, Encoding.UTF8.GetBytes(endStreamError), ct);
+                await response.Body.FlushAsync(ct);
+                return;
+            }
 
-        // Set response headers before streaming
-        response.StatusCode = 200;
-        response.ContentType = $"application/connect+{codec.Name}";
+            ConnectException? streamError = null;
+            try
+            {
+                await foreach (var msg in handler(service, requestMessage, context).WithCancellation(ct))
+                {
+                    var msgBytes = codec.Serialize(msg);
 
-        // Indicate response compression
-        if (clientAcceptsGzip && compressor != null)
-        {
-            response.Headers["Connect-Content-Encoding"] = "gzip";
-        }
+                    // Compress response envelope if client accepts
+                    if (clientAcceptsGzip && compressor != null)
+                    {
+                        msgBytes = compressor.Compress(msgBytes);
+                        await Envelope.WriteAsync(response.Body, Envelope.FlagCompressed, msgBytes, ct);
+                    }
+                    else
+                    {
+                        await Envelope.WriteAsync(response.Body, 0x00, msgBytes, ct);
+                    }
+                    await response.Body.FlushAsync(ct);
+                }
+            }
+            catch (ConnectException ex)
+            {
+                streamError = ex;
+            }
+            catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)
+            {
+                streamError = new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded");
+            }
+            catch (Exception)
+            {
+                streamError = new ConnectException(ConnectCode.Internal, "internal error");
+            }
 
-        var context = new ConnectContext(cancellationToken: httpContext.RequestAborted);
-        var handler = method.ServerStreamHandler;
-        if (handler == null)
-        {
-            var endStreamError = BuildEndStreamJson(null, context);
-            await Envelope.WriteAsync(response.Body, Envelope.FlagEndStream, Encoding.UTF8.GetBytes(endStreamError), httpContext.RequestAborted);
+            // Write EndStream envelope
+            var endStreamJson = BuildEndStreamJson(streamError, context);
+            await Envelope.WriteAsync(response.Body, Envelope.FlagEndStream, Encoding.UTF8.GetBytes(endStreamJson), httpContext.RequestAborted);
             await response.Body.FlushAsync(httpContext.RequestAborted);
-            return;
         }
-
-        ConnectException? streamError = null;
-        try
+        catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)
         {
-            await foreach (var msg in handler(service, requestMessage, context).WithCancellation(httpContext.RequestAborted))
-            {
-                var msgBytes = codec.Serialize(msg);
-
-                // Compress response envelope if client accepts
-                if (clientAcceptsGzip && compressor != null)
-                {
-                    msgBytes = compressor.Compress(msgBytes);
-                    await Envelope.WriteAsync(response.Body, Envelope.FlagCompressed, msgBytes, httpContext.RequestAborted);
-                }
-                else
-                {
-                    await Envelope.WriteAsync(response.Body, 0x00, msgBytes, httpContext.RequestAborted);
-                }
-                await response.Body.FlushAsync(httpContext.RequestAborted);
-            }
+            // Timeout before streaming started
+            response.StatusCode = 504;
+            response.ContentType = "application/json";
+            var error = new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded");
+            await response.WriteAsync(error.ToJson());
         }
-        catch (ConnectException ex)
+        finally
         {
-            streamError = ex;
+            timeoutCts?.Dispose();
         }
-        catch (Exception)
-        {
-            streamError = new ConnectException(ConnectCode.Internal, "internal error");
-        }
-
-        // Write EndStream envelope
-        var endStreamJson = BuildEndStreamJson(streamError, context);
-        await Envelope.WriteAsync(response.Body, Envelope.FlagEndStream, Encoding.UTF8.GetBytes(endStreamJson), httpContext.RequestAborted);
-        await response.Body.FlushAsync(httpContext.RequestAborted);
     }
 
     internal static string BuildEndStreamJson(ConnectException? error, ConnectContext context)

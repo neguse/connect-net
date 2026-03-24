@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf;
 using Microsoft.AspNetCore.Http;
@@ -44,11 +45,23 @@ internal static class ConnectUnaryHandler
         // Resolve compressor from DI (optional)
         var compressor = httpContext.RequestServices.GetService(typeof(ICompressor)) as ICompressor;
 
+        // Parse Connect-Timeout-Ms header
+        CancellationTokenSource? timeoutCts = null;
+        var ct = httpContext.RequestAborted;
+
+        if (request.Headers.TryGetValue("Connect-Timeout-Ms", out var timeoutStr) &&
+            long.TryParse(timeoutStr, out var timeoutMs) && timeoutMs > 0)
+        {
+            timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
+            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
+            ct = timeoutCts.Token;
+        }
+
         try
         {
             // Read and deserialize request
             using var ms = new MemoryStream();
-            await request.Body.CopyToAsync(ms);
+            await request.Body.CopyToAsync(ms, ct);
             var requestBytes = ms.ToArray();
 
             // Decompress request if Content-Encoding is gzip
@@ -74,7 +87,7 @@ internal static class ConnectUnaryHandler
             {
                 requestHeaders[header.Key] = header.Value.ToString();
             }
-            var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: httpContext.RequestAborted);
+            var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
 
             // Invoke service method (with interceptor chain if configured)
             var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
@@ -122,7 +135,14 @@ internal static class ConnectUnaryHandler
                 response.Headers["Content-Encoding"] = "gzip";
             }
 
-            await response.Body.WriteAsync(responseBytes);
+            await response.Body.WriteAsync(responseBytes, ct);
+        }
+        catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)
+        {
+            response.StatusCode = 504;
+            response.ContentType = "application/json";
+            var error = new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded");
+            await response.WriteAsync(error.ToJson());
         }
         catch (ConnectException ex)
         {
@@ -136,6 +156,10 @@ internal static class ConnectUnaryHandler
             response.ContentType = "application/json";
             var error = new ConnectException(ConnectCode.Internal, "internal error");
             await response.WriteAsync(error.ToJson());
+        }
+        finally
+        {
+            timeoutCts?.Dispose();
         }
     }
 }
