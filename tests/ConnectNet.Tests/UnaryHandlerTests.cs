@@ -95,8 +95,8 @@ public class UnaryHandlerTests
         using var client = server.CreateClient();
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/example.GreeterService/SayHello");
-        httpRequest.Content = new StringContent("{}");
-        httpRequest.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        httpRequest.Content = new StringContent("<xml/>");
+        httpRequest.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/xml");
         httpRequest.Headers.Add("Connect-Protocol-Version", "1");
 
         var response = await client.SendAsync(httpRequest);

@@ -16,7 +16,11 @@ public static class ConnectServiceExtensions
 {
     public static IServiceCollection AddConnectServices(this IServiceCollection services, Action<ConnectServerOptions>? configure = null)
     {
-        services.AddSingleton<ICodec, ProtobufCodec>();
+        var registry = new ConnectCodecRegistry();
+        registry.Register(new ProtobufCodec());
+        registry.Register(new JsonCodec());
+        services.AddSingleton(registry);
+        services.AddSingleton<ICodec>(sp => sp.GetRequiredService<ConnectCodecRegistry>().Default);
         services.AddSingleton<ICompressor, GzipCompressor>();
 
         var options = new ConnectServerOptions();
@@ -36,7 +40,8 @@ public static class ConnectServiceExtensions
             builder.MapPost(method.Procedure, async (HttpContext context) =>
             {
                 var service = context.RequestServices.GetRequiredService<TService>();
-                var codec = context.RequestServices.GetRequiredService<ICodec>();
+                var registry = context.RequestServices.GetRequiredService<ConnectCodecRegistry>();
+                var codec = ResolveCodecFromContentType(context.Request.ContentType, registry, method.MethodType);
 
                 switch (method.MethodType)
                 {
@@ -62,10 +67,58 @@ public static class ConnectServiceExtensions
                 builder.MapGet(method.Procedure, async (HttpContext context) =>
                 {
                     var service = context.RequestServices.GetRequiredService<TService>();
-                    var codec = context.RequestServices.GetRequiredService<ICodec>();
+                    var registry = context.RequestServices.GetRequiredService<ConnectCodecRegistry>();
+                    var codec = ResolveCodecFromEncoding(context.Request.Query, registry);
                     await ConnectUnaryHandler.HandleGetAsync(context, method, service, codec);
                 });
             }
         }
+    }
+
+    /// <summary>
+    /// Resolves the correct codec based on the Content-Type header.
+    /// For unary: application/proto, application/json
+    /// For streaming: application/connect+proto, application/connect+json
+    /// Falls back to the default codec (proto) if content type is unrecognized.
+    /// </summary>
+    private static ICodec ResolveCodecFromContentType(string? contentType, ConnectCodecRegistry registry, ConnectMethodType methodType)
+    {
+        if (contentType == null)
+            return registry.Default;
+
+        // Streaming content types: application/connect+{codec}
+        if (contentType.StartsWith("application/connect+", StringComparison.OrdinalIgnoreCase))
+        {
+            var codecName = contentType.Substring("application/connect+".Length);
+            // Remove any parameters (e.g., ;charset=utf-8)
+            var semiIndex = codecName.IndexOf(';');
+            if (semiIndex >= 0)
+                codecName = codecName.Substring(0, semiIndex);
+            return registry.Get(codecName.Trim()) ?? registry.Default;
+        }
+
+        // Unary content types: application/{codec}
+        if (contentType.StartsWith("application/", StringComparison.OrdinalIgnoreCase))
+        {
+            var codecName = contentType.Substring("application/".Length);
+            var semiIndex = codecName.IndexOf(';');
+            if (semiIndex >= 0)
+                codecName = codecName.Substring(0, semiIndex);
+            return registry.Get(codecName.Trim()) ?? registry.Default;
+        }
+
+        return registry.Default;
+    }
+
+    /// <summary>
+    /// Resolves the correct codec from the encoding query parameter (GET requests).
+    /// </summary>
+    private static ICodec ResolveCodecFromEncoding(IQueryCollection query, ConnectCodecRegistry registry)
+    {
+        if (query.TryGetValue("encoding", out var encoding) && !string.IsNullOrEmpty(encoding))
+        {
+            return registry.Get(encoding!) ?? registry.Default;
+        }
+        return registry.Default;
     }
 }
