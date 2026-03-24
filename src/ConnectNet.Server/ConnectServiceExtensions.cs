@@ -26,6 +26,7 @@ public static class ConnectServiceExtensions
         var options = new ConnectServerOptions();
         configure?.Invoke(options);
         services.AddSingleton(options);
+        services.AddSingleton<ConnectReflectionService>();
 
         return services;
     }
@@ -35,6 +36,9 @@ public static class ConnectServiceExtensions
         IConnectServiceDefinition definition)
         where TService : class
     {
+        var reflection = builder.ServiceProvider.GetService<ConnectReflectionService>();
+        reflection?.AddService(definition.ServiceName);
+
         foreach (var method in definition.Methods)
         {
             builder.MapPost(method.Procedure, async (HttpContext context) =>
