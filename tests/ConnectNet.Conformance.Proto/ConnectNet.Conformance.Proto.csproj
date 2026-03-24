@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.*" />
+    <PackageReference Include="Grpc.Tools" Version="2.*" PrivateAssets="All" />
+    <Protobuf Include="proto/connectrpc/conformance/v1/*.proto" GrpcServices="None" AdditionalImportDirs="proto" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ConnectNet/ConnectNet.csproj" />
+    <ProjectReference Include="../../src/ConnectNet.Client/ConnectNet.Client.csproj" />
+    <ProjectReference Include="../../src/ConnectNet.Server/ConnectNet.Server.csproj" />
+  </ItemGroup>
+</Project>
