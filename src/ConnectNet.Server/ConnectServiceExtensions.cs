@@ -24,7 +24,17 @@ public static class ConnectServiceExtensions
             {
                 var service = context.RequestServices.GetRequiredService<TService>();
                 var codec = context.RequestServices.GetRequiredService<ICodec>();
-                await ConnectUnaryHandler.HandleAsync(context, method, service, codec);
+
+                switch (method.MethodType)
+                {
+                    case ConnectMethodType.ServerStreaming:
+                        await ConnectServerStreamHandler.HandleAsync(context, method, service, codec);
+                        break;
+                    case ConnectMethodType.Unary:
+                    default:
+                        await ConnectUnaryHandler.HandleAsync(context, method, service, codec);
+                        break;
+                }
             });
         }
     }
