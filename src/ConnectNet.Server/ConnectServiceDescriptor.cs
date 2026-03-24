@@ -22,6 +22,7 @@ public class ConnectMethodDescriptor
     public Func<object, IMessage, ConnectContext, Task<IMessage>> Handler { get; }
     public Func<object, IMessage, ConnectContext, IAsyncEnumerable<IMessage>>? ServerStreamHandler { get; }
     public Func<object, IAsyncEnumerable<IMessage>, ConnectContext, Task<IMessage>>? ClientStreamHandler { get; }
+    public Func<object, IAsyncEnumerable<IMessage>, ConnectContext, IAsyncEnumerable<IMessage>>? BidiStreamHandler { get; }
 
     public ConnectMethodDescriptor(
         string procedure,
@@ -34,6 +35,7 @@ public class ConnectMethodDescriptor
         Handler = handler;
         ServerStreamHandler = null;
         ClientStreamHandler = null;
+        BidiStreamHandler = null;
     }
 
     public ConnectMethodDescriptor(
@@ -42,7 +44,8 @@ public class ConnectMethodDescriptor
         ConnectMethodType methodType,
         Func<object, IMessage, ConnectContext, Task<IMessage>>? handler = null,
         Func<object, IMessage, ConnectContext, IAsyncEnumerable<IMessage>>? serverStreamHandler = null,
-        Func<object, IAsyncEnumerable<IMessage>, ConnectContext, Task<IMessage>>? clientStreamHandler = null)
+        Func<object, IAsyncEnumerable<IMessage>, ConnectContext, Task<IMessage>>? clientStreamHandler = null,
+        Func<object, IAsyncEnumerable<IMessage>, ConnectContext, IAsyncEnumerable<IMessage>>? bidiStreamHandler = null)
     {
         Procedure = procedure;
         RequestParser = requestParser;
@@ -50,5 +53,6 @@ public class ConnectMethodDescriptor
         Handler = handler ?? ((_, _, _) => throw new ConnectException(ConnectCode.Unimplemented, "not implemented"));
         ServerStreamHandler = serverStreamHandler;
         ClientStreamHandler = clientStreamHandler;
+        BidiStreamHandler = bidiStreamHandler;
     }
 }
