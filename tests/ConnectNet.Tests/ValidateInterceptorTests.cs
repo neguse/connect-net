@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading.Tasks;
 using ConnectNet.Tests.Proto;
 using ConnectNet.Validation;
@@ -55,6 +56,38 @@ public class ValidateInterceptorTests
 
         Assert.True(called);
         Assert.Same(response, result);
+    }
+
+    [Fact]
+    public void ToErrorDetails_SetsFieldPath()
+    {
+        var violations = new[] { new Violation("name", "string.min_len", "too short") };
+
+        var details = ValidateInterceptor.ToErrorDetails(violations).ToArray();
+
+        Assert.Single(details);
+        var protoViolations = Buf.Validate.Violations.Parser.ParseFrom(details[0].Value);
+        Assert.Single(protoViolations.Violations_);
+        var v = protoViolations.Violations_[0];
+        Assert.Equal("string.min_len", v.RuleId);
+        Assert.NotNull(v.Field);
+        Assert.Single(v.Field.Elements);
+        Assert.Equal("name", v.Field.Elements[0].FieldName);
+    }
+
+    [Fact]
+    public void ToErrorDetails_SetsNestedFieldPath()
+    {
+        var violations = new[] { new Violation("inner.name", "string.min_len", "too short") };
+
+        var details = ValidateInterceptor.ToErrorDetails(violations).ToArray();
+
+        var protoViolations = Buf.Validate.Violations.Parser.ParseFrom(details[0].Value);
+        var v = protoViolations.Violations_[0];
+        Assert.NotNull(v.Field);
+        Assert.Equal(2, v.Field.Elements.Count);
+        Assert.Equal("inner", v.Field.Elements[0].FieldName);
+        Assert.Equal("name", v.Field.Elements[1].FieldName);
     }
 
     [Fact]

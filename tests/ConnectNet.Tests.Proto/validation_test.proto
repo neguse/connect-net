@@ -73,6 +73,26 @@ message DurationTestMessage {
   google.protobuf.Duration timeout = 1 [(buf.validate.field).required = true];
 }
 
+// --- Repeated with items rules ---
+message RepeatedItemsTestMessage {
+  repeated string values = 1 [(buf.validate.field).repeated.items = {
+    string: { min_len: 3 }
+  }];
+}
+
+// --- Map with keys/values rules ---
+message MapKeysValuesTestMessage {
+  map<string, string> entries = 1 [(buf.validate.field).map = {
+    keys: { string: { min_len: 2 } },
+    values: { string: { min_len: 3 } }
+  }];
+}
+
+// --- Enum const ---
+message EnumConstTestMessage {
+  Status status = 1 [(buf.validate.field).enum.const = 1];
+}
+
 // --- Disabled / ignore field ---
 message DisabledFieldMessage {
   string name = 1 [(buf.validate.field).string.min_len = 3];

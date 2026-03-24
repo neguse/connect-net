@@ -48,11 +48,18 @@ public class ValidateInterceptor : IServerInterceptor
         var protoViolations = new Buf.Validate.Violations();
         foreach (var v in violations)
         {
-            protoViolations.Violations_.Add(new Buf.Validate.Violation
+            var protoViolation = new Buf.Validate.Violation
             {
                 RuleId = v.ConstraintId,
                 Message = v.Message,
-            });
+            };
+
+            if (!string.IsNullOrEmpty(v.FieldPath))
+            {
+                protoViolation.Field = ToFieldPath(v.FieldPath);
+            }
+
+            protoViolations.Violations_.Add(protoViolation);
         }
 
         var bytes = protoViolations.ToByteArray();
@@ -60,5 +67,21 @@ public class ValidateInterceptor : IServerInterceptor
         {
             new ConnectErrorDetail("buf.validate.Violations", bytes)
         };
+    }
+
+    internal static Buf.Validate.FieldPath ToFieldPath(string path)
+    {
+        var fieldPath = new Buf.Validate.FieldPath();
+        // Split on '.' but preserve array subscripts like "items[0]"
+        var segments = path.Split('.');
+        foreach (var segment in segments)
+        {
+            var element = new Buf.Validate.FieldPathElement
+            {
+                FieldName = segment,
+            };
+            fieldPath.Elements.Add(element);
+        }
+        return fieldPath;
     }
 }

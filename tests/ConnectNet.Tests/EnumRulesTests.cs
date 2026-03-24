@@ -41,4 +41,40 @@ public class EnumRulesTests
             v.FieldPath == "status" &&
             v.ConstraintId == "enum.defined_only");
     }
+
+    // --- const ---
+
+    [Fact]
+    public void Const_Valid()
+    {
+        var msg = new EnumConstTestMessage { Status = Status.Active }; // Active = 1, const = 1
+
+        var result = _validator.Validate(msg);
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Const_Invalid()
+    {
+        var msg = new EnumConstTestMessage { Status = Status.Inactive }; // Inactive = 2, const = 1
+
+        var result = _validator.Validate(msg);
+
+        Assert.Contains(result.Violations, v =>
+            v.FieldPath == "status" &&
+            v.ConstraintId == "enum.const");
+    }
+
+    [Fact]
+    public void Const_Unspecified_Invalid()
+    {
+        var msg = new EnumConstTestMessage { Status = Status.Unspecified }; // 0 != 1
+
+        var result = _validator.Validate(msg);
+
+        Assert.Contains(result.Violations, v =>
+            v.FieldPath == "status" &&
+            v.ConstraintId == "enum.const");
+    }
 }

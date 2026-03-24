@@ -53,5 +53,15 @@ internal static class RepeatedRuleEvaluator
                     "repeated value must contain unique items"));
             }
         }
+
+        // items — validate each element against item-level rules
+        if (rules.Items != null)
+        {
+            for (int i = 0; i < list.Count; i++)
+            {
+                var itemPath = $"{path}[{i}]";
+                FieldRuleEvaluator.Evaluate(rules.Items, list[i], itemPath, violations);
+            }
+        }
     }
 }

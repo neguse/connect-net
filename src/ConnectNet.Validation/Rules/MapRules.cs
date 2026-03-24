@@ -30,5 +30,24 @@ internal static class MapRuleEvaluator
                 $"map must contain at most {rules.MaxPairs} entry/entries",
                 dict.Count));
         }
+
+        // keys / values — validate each key and value against their respective rules
+        if (rules.Keys != null || rules.Values != null)
+        {
+            foreach (DictionaryEntry entry in dict)
+            {
+                var keyStr = entry.Key?.ToString() ?? "";
+                if (rules.Keys != null)
+                {
+                    var keyPath = $"{path}[{keyStr}].key";
+                    FieldRuleEvaluator.Evaluate(rules.Keys, entry.Key, keyPath, violations);
+                }
+                if (rules.Values != null)
+                {
+                    var valuePath = $"{path}[{keyStr}]";
+                    FieldRuleEvaluator.Evaluate(rules.Values, entry.Value, valuePath, violations);
+                }
+            }
+        }
     }
 }

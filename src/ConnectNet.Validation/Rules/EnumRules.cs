@@ -9,6 +9,16 @@ internal static class EnumRuleEvaluator
 {
     public static void Evaluate(EnumRules rules, int value, string path, FieldDescriptor? fieldDescriptor, List<Violation> violations)
     {
+        // const
+        if (rules.HasConst && value != rules.Const)
+        {
+            violations.Add(new Violation(
+                path,
+                "enum.const",
+                $"must equal {rules.Const}",
+                value));
+        }
+
         // defined_only
         if (rules.DefinedOnly && fieldDescriptor?.EnumType != null)
         {
