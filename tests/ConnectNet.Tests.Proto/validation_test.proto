@@ -1,0 +1,80 @@
+syntax = "proto3";
+package validation_test;
+option csharp_namespace = "ConnectNet.Tests.Proto";
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// --- String rules ---
+message StringTestMessage {
+  string name = 1 [(buf.validate.field).string.min_len = 3];
+  string email = 2 [(buf.validate.field).string.email = true];
+  string code = 3 [(buf.validate.field).string = {min_len: 2, max_len: 10}];
+  string prefix_val = 4 [(buf.validate.field).string.prefix = "pre_"];
+  string pattern_val = 5 [(buf.validate.field).string.pattern = "^[a-z]+$"];
+}
+
+// --- Numeric rules ---
+message NumericTestMessage {
+  int32 age = 1 [(buf.validate.field).int32.gte = 0, (buf.validate.field).int32.lte = 150];
+  double score = 2 [(buf.validate.field).double.gte = 0.0, (buf.validate.field).double.lte = 100.0];
+  uint64 count = 3 [(buf.validate.field).uint64.gt = 0];
+}
+
+// --- Bool rules ---
+message BoolTestMessage {
+  bool must_be_true = 1 [(buf.validate.field).bool.const = true];
+}
+
+// --- Enum rules ---
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+}
+
+message EnumTestMessage {
+  Status status = 1 [(buf.validate.field).enum.defined_only = true];
+}
+
+// --- Repeated rules ---
+message RepeatedTestMessage {
+  repeated string tags = 1 [(buf.validate.field).repeated = {min_items: 1, max_items: 5}];
+  repeated int32 scores = 2 [(buf.validate.field).repeated.unique = true];
+}
+
+// --- Map rules ---
+message MapTestMessage {
+  map<string, string> labels = 1 [(buf.validate.field).map = {min_pairs: 1, max_pairs: 10}];
+}
+
+// --- Message / nested ---
+message NestedTestMessage {
+  StringTestMessage inner = 1 [(buf.validate.field).required = true];
+  repeated StringTestMessage items = 2;
+}
+
+// --- Oneof rules ---
+message OneofTestMessage {
+  oneof contact {
+    option (buf.validate.oneof).required = true;
+    string email = 1;
+    string phone = 2;
+  }
+}
+
+// --- Well-known types ---
+message TimestampTestMessage {
+  google.protobuf.Timestamp created_at = 1 [(buf.validate.field).required = true];
+}
+
+message DurationTestMessage {
+  google.protobuf.Duration timeout = 1 [(buf.validate.field).required = true];
+}
+
+// --- Disabled / ignore field ---
+message DisabledFieldMessage {
+  string name = 1 [(buf.validate.field).string.min_len = 3];
+  string skip_me = 2 [(buf.validate.field) = {ignore: IGNORE_ALWAYS, string: {min_len: 5}}];
+}

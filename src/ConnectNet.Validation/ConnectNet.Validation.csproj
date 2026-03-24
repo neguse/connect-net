@@ -7,10 +7,7 @@
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" Version="3.*" />
     <PackageReference Include="Grpc.Tools" Version="2.*" PrivateAssets="All" />
-    <!-- TODO: Uncomment when proto files are added (Task 2)
     <Protobuf Include="Proto/buf/validate/validate.proto" GrpcServices="None" AdditionalImportDirs="Proto" />
-    <Protobuf Include="Proto/buf/validate/priv/private.proto" GrpcServices="None" AdditionalImportDirs="Proto" />
-    -->
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../ConnectNet/ConnectNet.csproj" />

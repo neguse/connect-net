@@ -7,10 +7,12 @@
     <PackageReference Include="Google.Protobuf" Version="3.*" />
     <PackageReference Include="Grpc.Tools" Version="2.*" PrivateAssets="All" />
     <Protobuf Include="greeter.proto" GrpcServices="None" />
+    <Protobuf Include="validation_test.proto" GrpcServices="None" AdditionalImportDirs="../../src/ConnectNet.Validation/Proto" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/ConnectNet/ConnectNet.csproj" />
     <ProjectReference Include="../../src/ConnectNet.Client/ConnectNet.Client.csproj" />
     <ProjectReference Include="../../src/ConnectNet.Server/ConnectNet.Server.csproj" />
+    <ProjectReference Include="../../src/ConnectNet.Validation/ConnectNet.Validation.csproj" />
   </ItemGroup>
 </Project>
