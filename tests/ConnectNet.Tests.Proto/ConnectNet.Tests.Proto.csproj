@@ -8,4 +8,9 @@
     <PackageReference Include="Grpc.Tools" Version="2.*" PrivateAssets="All" />
     <Protobuf Include="greeter.proto" GrpcServices="None" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ConnectNet/ConnectNet.csproj" />
+    <ProjectReference Include="../../src/ConnectNet.Client/ConnectNet.Client.csproj" />
+    <ProjectReference Include="../../src/ConnectNet.Server/ConnectNet.Server.csproj" />
+  </ItemGroup>
 </Project>

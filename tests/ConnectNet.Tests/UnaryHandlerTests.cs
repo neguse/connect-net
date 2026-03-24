@@ -24,7 +24,7 @@ public class UnaryHandlerTests
         builder.Services.AddConnectServices();
         builder.Services.AddSingleton<TestGreeterService>();
         var app = builder.Build();
-        app.MapConnectService<TestGreeterService>(TestGreeterServiceDefinition.Instance);
+        app.MapConnectService<TestGreeterService>(GreeterServiceDefinition.Instance);
         app.Start();
         return app.GetTestServer();
     }
@@ -105,28 +105,13 @@ public class UnaryHandlerTests
 
     // --- Test service and definition ---
 
-    private class TestGreeterService
+    private class TestGreeterService : GreeterServiceBase
     {
-        public Task<HelloResponse> SayHello(HelloRequest request, ConnectContext context)
+        public override Task<HelloResponse> SayHello(HelloRequest request, ConnectContext context)
         {
             if (string.IsNullOrEmpty(request.Name))
                 throw new ConnectException(ConnectCode.NotFound, "name required");
             return Task.FromResult(new HelloResponse { Message = $"Hello {request.Name}" });
         }
-    }
-
-    private class TestGreeterServiceDefinition : IConnectServiceDefinition
-    {
-        public static TestGreeterServiceDefinition Instance { get; } = new();
-
-        public string ServiceName => "example.GreeterService";
-        public System.Collections.Generic.IReadOnlyList<ConnectMethodDescriptor> Methods { get; } = new[]
-        {
-            new ConnectMethodDescriptor(
-                "/example.GreeterService/SayHello",
-                HelloRequest.Parser,
-                async (service, req, ctx) => (IMessage)await ((TestGreeterService)service)
-                    .SayHello((HelloRequest)req, ctx))
-        };
     }
 }

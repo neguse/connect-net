@@ -12,4 +12,7 @@ message HelloResponse {
 
 service GreeterService {
   rpc SayHello (HelloRequest) returns (HelloResponse);
+  rpc SayHelloStream (HelloRequest) returns (stream HelloResponse);
+  rpc CollectHellos (stream HelloRequest) returns (HelloResponse);
+  rpc Chat (stream HelloRequest) returns (stream HelloResponse);
 }
