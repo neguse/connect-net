@@ -17,6 +17,7 @@ public class ConnectChannelOptions
 {
     public ICompressor? RequestCompressor { get; set; }
     public bool AcceptCompression { get; set; } = true;
+    public List<ICompressor> Decompressors { get; set; } = new() { new GzipCompressor(), new DeflateCompressor() };
     public List<IClientInterceptor> Interceptors { get; set; } = new();
 }
 
@@ -109,9 +110,9 @@ public class ConnectChannel
         httpRequest.Headers.Add("Connect-Protocol-Version", "1");
 
         // Signal that we accept compressed responses
-        if (_channelOptions.AcceptCompression)
+        if (_channelOptions.AcceptCompression && _channelOptions.Decompressors.Count > 0)
         {
-            httpRequest.Headers.Add("Accept-Encoding", "gzip");
+            httpRequest.Headers.Add("Accept-Encoding", string.Join(", ", _channelOptions.Decompressors.Select(d => d.Name)));
         }
 
         if (options?.Timeout is TimeSpan timeout)
@@ -137,12 +138,14 @@ public class ConnectChannel
 
         var responseBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
 
-        // Decompress response if Content-Encoding is gzip
+        // Decompress response if Content-Encoding matches a known decompressor
         var responseContentEncoding = httpResponse.Content.Headers.ContentEncoding.FirstOrDefault();
-        if (string.Equals(responseContentEncoding, "gzip", StringComparison.OrdinalIgnoreCase))
+        if (responseContentEncoding != null)
         {
-            var decompressor = new GzipCompressor();
-            responseBytes = decompressor.Decompress(responseBytes);
+            var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                string.Equals(d.Name, responseContentEncoding, StringComparison.OrdinalIgnoreCase));
+            if (decompressor != null)
+                responseBytes = decompressor.Decompress(responseBytes);
         }
 
         var result = _codec.Deserialize<TRes>(responseBytes);
@@ -180,9 +183,9 @@ public class ConnectChannel
         using var httpRequest = new HttpRequestMessage(HttpMethod.Get, uriBuilder.Uri);
 
         // Signal that we accept compressed responses
-        if (_channelOptions.AcceptCompression)
+        if (_channelOptions.AcceptCompression && _channelOptions.Decompressors.Count > 0)
         {
-            httpRequest.Headers.Add("Accept-Encoding", "gzip");
+            httpRequest.Headers.Add("Accept-Encoding", string.Join(", ", _channelOptions.Decompressors.Select(d => d.Name)));
         }
 
         if (options?.Timeout is TimeSpan timeout)
@@ -208,12 +211,14 @@ public class ConnectChannel
 
         var responseBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
 
-        // Decompress response if Content-Encoding is gzip
+        // Decompress response if Content-Encoding matches a known decompressor
         var responseContentEncoding = httpResponse.Content.Headers.ContentEncoding.FirstOrDefault();
-        if (string.Equals(responseContentEncoding, "gzip", StringComparison.OrdinalIgnoreCase))
+        if (responseContentEncoding != null)
         {
-            var decompressor = new GzipCompressor();
-            responseBytes = decompressor.Decompress(responseBytes);
+            var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                string.Equals(d.Name, responseContentEncoding, StringComparison.OrdinalIgnoreCase));
+            if (decompressor != null)
+                responseBytes = decompressor.Decompress(responseBytes);
         }
 
         var result = _codec.Deserialize<TRes>(responseBytes);
@@ -292,9 +297,9 @@ public class ConnectChannel
         {
             httpRequest.Headers.Add("Connect-Content-Encoding", _channelOptions.RequestCompressor.Name);
         }
-        if (_channelOptions.AcceptCompression)
+        if (_channelOptions.AcceptCompression && _channelOptions.Decompressors.Count > 0)
         {
-            httpRequest.Headers.Add("Connect-Accept-Encoding", "gzip");
+            httpRequest.Headers.Add("Connect-Accept-Encoding", string.Join(", ", _channelOptions.Decompressors.Select(d => d.Name)));
         }
 
         if (options?.Timeout is TimeSpan timeout)
@@ -353,11 +358,12 @@ public class ConnectChannel
             }
 
             // Decompress if flag indicates compression
-            if ((flags & Envelope.FlagCompressed) != 0 &&
-                string.Equals(serverCompression, "gzip", StringComparison.OrdinalIgnoreCase))
+            if ((flags & Envelope.FlagCompressed) != 0 && serverCompression != null)
             {
-                var decompressor = new GzipCompressor();
-                data = decompressor.Decompress(data);
+                var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                    string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
+                if (decompressor != null)
+                    data = decompressor.Decompress(data);
             }
 
             // Normal message envelope
