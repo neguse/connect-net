@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -5,12 +7,22 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ConnectNet.Server;
 
+public class ConnectServerOptions
+{
+    public List<IServerInterceptor> Interceptors { get; } = new();
+}
+
 public static class ConnectServiceExtensions
 {
-    public static IServiceCollection AddConnectServices(this IServiceCollection services)
+    public static IServiceCollection AddConnectServices(this IServiceCollection services, Action<ConnectServerOptions>? configure = null)
     {
         services.AddSingleton<ICodec, ProtobufCodec>();
         services.AddSingleton<ICompressor, GzipCompressor>();
+
+        var options = new ConnectServerOptions();
+        configure?.Invoke(options);
+        services.AddSingleton(options);
+
         return services;
     }
 

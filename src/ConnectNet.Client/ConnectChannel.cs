@@ -17,6 +17,7 @@ public class ConnectChannelOptions
 {
     public ICompressor? RequestCompressor { get; set; }
     public bool AcceptCompression { get; set; } = true;
+    public List<IClientInterceptor> Interceptors { get; set; } = new();
 }
 
 public class ConnectChannel
@@ -40,6 +41,45 @@ public class ConnectChannel
         CallOptions? options = null,
         CancellationToken ct = default)
         where TReq : IMessage<TReq>
+        where TRes : IMessage<TRes>, new()
+    {
+        var interceptors = _channelOptions.Interceptors;
+        if (interceptors.Count > 0)
+        {
+            var headers = options?.Headers != null
+                ? new Dictionary<string, string>(options.Headers)
+                : new Dictionary<string, string>();
+            var context = new UnaryRequestContext(procedure, request, headers);
+
+            // Build the chain: innermost is the actual HTTP call
+            Func<UnaryRequestContext, Task<IMessage>> chain = async (ctx) =>
+            {
+                // Copy any headers modified by interceptors back to options
+                var callOpts = options ?? new CallOptions();
+                callOpts.Headers = ctx.Headers;
+                return (IMessage)await SendUnaryAsync<TRes>(ctx.Procedure, ctx.Request, callOpts, ct).ConfigureAwait(false);
+            };
+
+            // Wrap interceptors in reverse order so first interceptor runs first
+            for (int i = interceptors.Count - 1; i >= 0; i--)
+            {
+                var interceptor = interceptors[i];
+                var next = chain;
+                chain = (ctx) => interceptor.InterceptUnaryAsync(ctx, next, ct);
+            }
+
+            var result = await chain(context).ConfigureAwait(false);
+            return (TRes)result;
+        }
+
+        return await SendUnaryAsync<TRes>(procedure, request, options, ct).ConfigureAwait(false);
+    }
+
+    private async Task<TRes> SendUnaryAsync<TRes>(
+        string procedure,
+        IMessage request,
+        CallOptions? options,
+        CancellationToken ct)
         where TRes : IMessage<TRes>, new()
     {
         var body = _codec.Serialize(request);

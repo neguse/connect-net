@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Google.Protobuf;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ConnectNet.Server;
 
@@ -65,11 +68,38 @@ internal static class ConnectUnaryHandler
 
             var requestMessage = codec.Deserialize(requestBytes, method.RequestParser);
 
-            // Create context
-            var context = new ConnectContext(cancellationToken: httpContext.RequestAborted);
+            // Create context with request headers
+            var requestHeaders = new Dictionary<string, string>();
+            foreach (var header in request.Headers)
+            {
+                requestHeaders[header.Key] = header.Value.ToString();
+            }
+            var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: httpContext.RequestAborted);
 
-            // Invoke service method
-            var responseMessage = await method.Handler(service, requestMessage, context);
+            // Invoke service method (with interceptor chain if configured)
+            var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
+            IMessage responseMessage;
+
+            if (serverOptions != null && serverOptions.Interceptors.Count > 0)
+            {
+                var serverContext = new UnaryServerContext(method.Procedure, requestMessage, context);
+
+                Func<UnaryServerContext, Task<IMessage>> chain = async (ctx) =>
+                    await method.Handler(service, ctx.Request, ctx.Context);
+
+                for (int i = serverOptions.Interceptors.Count - 1; i >= 0; i--)
+                {
+                    var interceptor = serverOptions.Interceptors[i];
+                    var next = chain;
+                    chain = (ctx) => interceptor.InterceptUnaryAsync(ctx, next);
+                }
+
+                responseMessage = await chain(serverContext);
+            }
+            else
+            {
+                responseMessage = await method.Handler(service, requestMessage, context);
+            }
 
             // Write response
             response.StatusCode = 200;
