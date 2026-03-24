@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ConnectNet/ConnectNet.csproj" />
+    <ProjectReference Include="../../src/ConnectNet.Server/ConnectNet.Server.csproj" />
+    <ProjectReference Include="../../tests/ConnectNet.Tests.Proto/ConnectNet.Tests.Proto.csproj" />
+  </ItemGroup>
+</Project>
