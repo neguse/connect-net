@@ -67,6 +67,12 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
 
         var httpResponse = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, _ct).ConfigureAwait(false);
 
+        // Extract response headers early so they are available even on error
+        if (_options != null)
+        {
+            ConnectChannel.ExtractResponseHeaders(httpResponse, _options);
+        }
+
         if (!httpResponse.IsSuccessStatusCode)
         {
             var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
@@ -93,6 +99,12 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
                 var endStreamJson = Encoding.UTF8.GetString(data);
                 using var doc = JsonDocument.Parse(endStreamJson);
                 var root = doc.RootElement;
+
+                // Extract trailers from EndStream metadata
+                if (_options != null && root.TryGetProperty("metadata", out var metadataElement))
+                {
+                    ConnectChannel.ExtractEndStreamTrailers(metadataElement, _options);
+                }
 
                 if (root.TryGetProperty("error", out var errorElement))
                 {

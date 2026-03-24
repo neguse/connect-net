@@ -130,6 +130,20 @@ public class ConnectChannel
 
         var httpResponse = await _httpClient.SendAsync(httpRequest, ct).ConfigureAwait(false);
 
+        // Extract response headers and Trailer-* headers early so they are available even on error
+        if (options != null)
+        {
+            ExtractResponseHeaders(httpResponse, options);
+            foreach (var header in httpResponse.Headers)
+            {
+                if (header.Key.StartsWith("Trailer-", StringComparison.OrdinalIgnoreCase))
+                {
+                    var trailerName = header.Key.Substring("Trailer-".Length);
+                    options.ResponseTrailers[trailerName] = string.Join(",", header.Value);
+                }
+            }
+        }
+
         if (!httpResponse.IsSuccessStatusCode)
         {
             var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
@@ -149,19 +163,6 @@ public class ConnectChannel
         }
 
         var result = _codec.Deserialize<TRes>(responseBytes);
-
-        // Extract Trailer-* headers
-        if (options != null)
-        {
-            foreach (var header in httpResponse.Headers)
-            {
-                if (header.Key.StartsWith("Trailer-", StringComparison.OrdinalIgnoreCase))
-                {
-                    var trailerName = header.Key.Substring("Trailer-".Length);
-                    options.ResponseTrailers[trailerName] = string.Join(",", header.Value);
-                }
-            }
-        }
 
         return result;
     }
@@ -203,6 +204,20 @@ public class ConnectChannel
 
         var httpResponse = await _httpClient.SendAsync(httpRequest, ct).ConfigureAwait(false);
 
+        // Extract response headers and Trailer-* headers early so they are available even on error
+        if (options != null)
+        {
+            ExtractResponseHeaders(httpResponse, options);
+            foreach (var header in httpResponse.Headers)
+            {
+                if (header.Key.StartsWith("Trailer-", StringComparison.OrdinalIgnoreCase))
+                {
+                    var trailerName = header.Key.Substring("Trailer-".Length);
+                    options.ResponseTrailers[trailerName] = string.Join(",", header.Value);
+                }
+            }
+        }
+
         if (!httpResponse.IsSuccessStatusCode)
         {
             var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
@@ -222,19 +237,6 @@ public class ConnectChannel
         }
 
         var result = _codec.Deserialize<TRes>(responseBytes);
-
-        // Extract Trailer-* headers
-        if (options != null)
-        {
-            foreach (var header in httpResponse.Headers)
-            {
-                if (header.Key.StartsWith("Trailer-", StringComparison.OrdinalIgnoreCase))
-                {
-                    var trailerName = header.Key.Substring("Trailer-".Length);
-                    options.ResponseTrailers[trailerName] = string.Join(",", header.Value);
-                }
-            }
-        }
 
         return result;
     }
@@ -323,6 +325,12 @@ public class ConnectChannel
             throw ConnectException.FromJson(errorBody);
         }
 
+        // Extract response headers
+        if (options != null)
+        {
+            ExtractResponseHeaders(httpResponse, options);
+        }
+
         // Check if server is sending compressed envelopes
         httpResponse.Headers.TryGetValues("Connect-Content-Encoding", out var connectContentEncodings);
         var serverCompression = connectContentEncodings?.FirstOrDefault();
@@ -342,10 +350,16 @@ public class ConnectChannel
 
             if ((flags & Envelope.FlagEndStream) != 0)
             {
-                // Parse EndStream JSON
+                // Parse EndStream JSON and extract trailers
                 var endStreamJson = Encoding.UTF8.GetString(data);
                 using var doc = JsonDocument.Parse(endStreamJson);
                 var root = doc.RootElement;
+
+                // Extract trailers from EndStream metadata
+                if (options != null && root.TryGetProperty("metadata", out var metadataElement))
+                {
+                    ExtractEndStreamTrailers(metadataElement, options);
+                }
 
                 if (root.TryGetProperty("error", out var errorElement))
                 {
@@ -369,6 +383,42 @@ public class ConnectChannel
             // Normal message envelope
             var message = _codec.Deserialize<TRes>(data);
             yield return message;
+        }
+    }
+
+    internal static void ExtractResponseHeaders(HttpResponseMessage httpResponse, CallOptions options)
+    {
+        foreach (var header in httpResponse.Headers)
+        {
+            options.ResponseHeaders[header.Key] = string.Join(",", header.Value);
+        }
+        // Also include content headers
+        if (httpResponse.Content?.Headers != null)
+        {
+            foreach (var header in httpResponse.Content.Headers)
+            {
+                options.ResponseHeaders[header.Key] = string.Join(",", header.Value);
+            }
+        }
+    }
+
+    internal static void ExtractEndStreamTrailers(JsonElement metadataElement, CallOptions options)
+    {
+        if (metadataElement.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in metadataElement.EnumerateObject())
+            {
+                if (prop.Value.ValueKind == JsonValueKind.Array)
+                {
+                    var values = new List<string>();
+                    foreach (var v in prop.Value.EnumerateArray())
+                    {
+                        var s = v.GetString();
+                        if (s != null) values.Add(s);
+                    }
+                    options.ResponseTrailers[prop.Name] = string.Join(",", values);
+                }
+            }
         }
     }
 }
