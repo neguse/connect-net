@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "dgSpecHash": "rxqEtVzsYF4=",
+  "success": true,
+  "projectFilePath": "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/ConnectNet.Validation.csproj",
+  "expectedPackageFiles": [
+    "/home/neguse/.nuget/packages/google.protobuf/3.34.1/google.protobuf.3.34.1.nupkg.sha512",
+    "/home/neguse/.nuget/packages/grpc.tools/2.78.0/grpc.tools.2.78.0.nupkg.sha512",
+    "/home/neguse/.nuget/packages/microsoft.bcl.asyncinterfaces/8.0.0/microsoft.bcl.asyncinterfaces.8.0.0.nupkg.sha512",
+    "/home/neguse/.nuget/packages/system.buffers/4.5.1/system.buffers.4.5.1.nupkg.sha512",
+    "/home/neguse/.nuget/packages/system.memory/4.5.5/system.memory.4.5.5.nupkg.sha512",
+    "/home/neguse/.nuget/packages/system.numerics.vectors/4.4.0/system.numerics.vectors.4.4.0.nupkg.sha512",
+    "/home/neguse/.nuget/packages/system.runtime.compilerservices.unsafe/6.0.0/system.runtime.compilerservices.unsafe.6.0.0.nupkg.sha512",
+    "/home/neguse/.nuget/packages/system.text.encodings.web/8.0.0/system.text.encodings.web.8.0.0.nupkg.sha512",
+    "/home/neguse/.nuget/packages/system.text.json/8.0.6/system.text.json.8.0.6.nupkg.sha512",
+    "/home/neguse/.nuget/packages/system.threading.tasks.extensions/4.5.4/system.threading.tasks.extensions.4.5.4.nupkg.sha512",
+    "/home/neguse/.nuget/packages/netstandard.library.ref/2.1.0/netstandard.library.ref.2.1.0.nupkg.sha512"
+  ],
+  "logs": []
+}

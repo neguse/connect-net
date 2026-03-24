@@ -1,10 +1,15 @@
 <Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/Sample.Server/Sample.Server.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/ConnectNet.Client/ConnectNet.Client.csproj" />
     <Project Path="src/ConnectNet.Server/ConnectNet.Server.csproj" />
     <Project Path="src/ConnectNet/ConnectNet.csproj" />
+    <Project Path="src/ConnectNet.Validation/ConnectNet.Validation.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ConnectNet.IntegrationTests/ConnectNet.IntegrationTests.csproj" />
     <Project Path="tests/ConnectNet.Tests.Proto/ConnectNet.Tests.Proto.csproj" />
     <Project Path="tests/ConnectNet.Tests/ConnectNet.Tests.csproj" />
   </Folder>

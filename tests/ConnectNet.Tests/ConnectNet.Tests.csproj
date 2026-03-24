@@ -15,5 +15,6 @@
     <ProjectReference Include="../../src/ConnectNet.Client/ConnectNet.Client.csproj" />
     <ProjectReference Include="../../src/ConnectNet.Server/ConnectNet.Server.csproj" />
     <ProjectReference Include="../ConnectNet.Tests.Proto/ConnectNet.Tests.Proto.csproj" />
+    <ProjectReference Include="../../src/ConnectNet.Validation/ConnectNet.Validation.csproj" />
   </ItemGroup>
 </Project>

@@ -1,0 +1,163 @@
+{
+  "format": 1,
+  "restore": {
+    "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/ConnectNet.Validation.csproj": {}
+  },
+  "projects": {
+    "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/ConnectNet.Validation.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/ConnectNet.Validation.csproj",
+        "projectName": "ConnectNet.Validation",
+        "projectPath": "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/ConnectNet.Validation.csproj",
+        "packagesPath": "/home/neguse/.nuget/packages/",
+        "outputPath": "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/home/neguse/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "netstandard2.1"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "netstandard2.1": {
+            "targetAlias": "netstandard2.1",
+            "projectReferences": {
+              "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet/ConnectNet.csproj": {
+                "projectPath": "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet/ConnectNet.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.100"
+      },
+      "frameworks": {
+        "netstandard2.1": {
+          "targetAlias": "netstandard2.1",
+          "dependencies": {
+            "Google.Protobuf": {
+              "target": "Package",
+              "version": "[3.*, )"
+            },
+            "Grpc.Tools": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[2.*, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "NETStandard.Library.Ref",
+              "version": "[2.1.0, 2.1.0]"
+            }
+          ],
+          "frameworkReferences": {
+            "NETStandard.Library": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/share/dotnet/sdk/10.0.104/RuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet/ConnectNet.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet/ConnectNet.csproj",
+        "projectName": "ConnectNet",
+        "projectPath": "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet/ConnectNet.csproj",
+        "packagesPath": "/home/neguse/.nuget/packages/",
+        "outputPath": "/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/home/neguse/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "netstandard2.1"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "netstandard2.1": {
+            "targetAlias": "netstandard2.1",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.100"
+      },
+      "frameworks": {
+        "netstandard2.1": {
+          "targetAlias": "netstandard2.1",
+          "dependencies": {
+            "Google.Protobuf": {
+              "target": "Package",
+              "version": "[3.*, )"
+            },
+            "System.Text.Json": {
+              "target": "Package",
+              "version": "[8.*, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "NETStandard.Library.Ref",
+              "version": "[2.1.0, 2.1.0]"
+            }
+          ],
+          "frameworkReferences": {
+            "NETStandard.Library": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/share/dotnet/sdk/10.0.104/RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

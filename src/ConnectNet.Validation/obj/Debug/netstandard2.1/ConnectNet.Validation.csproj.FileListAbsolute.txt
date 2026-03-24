@@ -1,0 +1,14 @@
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/bin/Debug/netstandard2.1/ConnectNet.Validation.deps.json
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/bin/Debug/netstandard2.1/ConnectNet.Validation.dll
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/bin/Debug/netstandard2.1/ConnectNet.Validation.pdb
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/bin/Debug/netstandard2.1/ConnectNet.dll
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/bin/Debug/netstandard2.1/ConnectNet.pdb
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/obj/Debug/netstandard2.1/ConnectNet.Validation.csproj.AssemblyReference.cache
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/obj/Debug/netstandard2.1/ConnectNet.Validation.GeneratedMSBuildEditorConfig.editorconfig
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/obj/Debug/netstandard2.1/ConnectNet.Validation.AssemblyInfoInputs.cache
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/obj/Debug/netstandard2.1/ConnectNet.Validation.AssemblyInfo.cs
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/obj/Debug/netstandard2.1/ConnectNet.Validation.csproj.CoreCompileInputs.cache
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/obj/Debug/netstandard2.1/ConnectNet.Validation.sourcelink.json
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/obj/Debug/netstandard2.1/ConnectN.DE80AB3D.Up2Date
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/obj/Debug/netstandard2.1/ConnectNet.Validation.dll
+/home/neguse/ghq/github.com/neguse/connect-net/src/ConnectNet.Validation/obj/Debug/netstandard2.1/ConnectNet.Validation.pdb
