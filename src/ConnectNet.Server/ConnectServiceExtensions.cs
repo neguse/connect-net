@@ -30,6 +30,9 @@ public static class ConnectServiceExtensions
                     case ConnectMethodType.ServerStreaming:
                         await ConnectServerStreamHandler.HandleAsync(context, method, service, codec);
                         break;
+                    case ConnectMethodType.ClientStreaming:
+                        await ConnectClientStreamHandler.HandleAsync(context, method, service, codec);
+                        break;
                     case ConnectMethodType.Unary:
                     default:
                         await ConnectUnaryHandler.HandleAsync(context, method, service, codec);

@@ -81,6 +81,14 @@ public class ConnectChannel
         return result;
     }
 
+    public ClientStreamCall<TReq, TRes> ClientStreamAsync<TReq, TRes>(
+        string procedure, CallOptions? options = null, CancellationToken ct = default)
+        where TReq : IMessage<TReq>
+        where TRes : IMessage<TRes>, new()
+    {
+        return new ClientStreamCall<TReq, TRes>(_httpClient, _baseUri, procedure, _codec, options, ct);
+    }
+
     public async IAsyncEnumerable<TRes> ServerStreamAsync<TReq, TRes>(
         string procedure,
         TReq request,
