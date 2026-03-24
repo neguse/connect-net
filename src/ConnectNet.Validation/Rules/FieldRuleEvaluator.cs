@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using Buf.Validate;
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
+using Google.Protobuf.WellKnownTypes;
 
 namespace ConnectNet.Validation.Rules;
 
@@ -102,6 +103,16 @@ internal static class FieldRuleEvaluator
 
             case FieldRules.TypeOneofCase.Map:
                 MapRuleEvaluator.Evaluate(rules.Map, value, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Timestamp:
+                if (value is Timestamp timestampValue)
+                    WellKnownTypeRuleEvaluator.EvaluateTimestamp(rules.Timestamp, timestampValue, path, violations);
+                break;
+
+            case FieldRules.TypeOneofCase.Duration:
+                if (value is Duration durationValue)
+                    WellKnownTypeRuleEvaluator.EvaluateDuration(rules.Duration, durationValue, path, violations);
                 break;
 
             default:
