@@ -1,0 +1,378 @@
+# connect-net
+
+A C# implementation of the [Connect protocol](https://connectrpc.com/docs/protocol) for .NET.
+
+Build type-safe RPC clients and servers that work over HTTP/1.1 and HTTP/2.
+
+## Features
+
+- **Unity compatible** -- Client library targets .NET Standard 2.1
+- **Full RPC support** -- Unary, Server Streaming, Client Streaming, Bidirectional Streaming
+- **Multiple codecs** -- Protobuf and JSON
+- **gzip compression** -- Automatic request/response compression with negotiation
+- **Interceptors** -- Client-side and server-side middleware for unary RPCs
+- **GET requests** -- Cache-friendly idempotent RPCs via query parameters
+- **Health checks** -- gRPC-compatible health endpoint (`grpc.health.v1.Health/Check`)
+- **Service discovery** -- Server reflection via `/connect/v1/services` and gRPC reflection
+- **Code generation** -- `protoc-gen-connect-csharp` plugin generates typed clients and server stubs
+
+## Quick Start
+
+### Define your service
+
+```protobuf
+syntax = "proto3";
+package example;
+option csharp_namespace = "Example";
+
+service GreeterService {
+  rpc SayHello (HelloRequest) returns (HelloResponse);
+  rpc SayHelloStream (HelloRequest) returns (stream HelloResponse);
+  rpc CollectHellos (stream HelloRequest) returns (HelloResponse);
+  rpc Chat (stream HelloRequest) returns (stream HelloResponse);
+}
+
+message HelloRequest { string name = 1; }
+message HelloResponse { string message = 1; }
+```
+
+### Generate code
+
+```bash
+protoc --csharp_out=. --connect-csharp_out=. greeter.proto
+```
+
+This generates two files:
+- `Greeter.cs` -- Protobuf message classes (from `--csharp_out`)
+- `GreeterService.connect.cs` -- Connect RPC client, server base class, and service definition (from `--connect-csharp_out`)
+
+### Server
+
+```csharp
+using ConnectNet;
+using ConnectNet.Server;
+
+// Implement the generated base class
+public class GreeterImpl : GreeterServiceBase
+{
+    public override Task<HelloResponse> SayHello(HelloRequest request, ConnectContext context)
+    {
+        return Task.FromResult(new HelloResponse { Message = $"Hello {request.Name}!" });
+    }
+}
+
+// Register in ASP.NET Core
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddConnectServices();
+builder.Services.AddSingleton<GreeterImpl>();
+
+var app = builder.Build();
+app.MapConnectService<GreeterImpl>(GreeterServiceDefinition.Instance);
+app.Run();
+```
+
+### Client
+
+```csharp
+using ConnectNet.Client;
+
+var channel = new ConnectChannel(new HttpClient(), "https://localhost:5000");
+var client = new GreeterServiceClient(channel);
+
+var response = await client.SayHelloAsync(new HelloRequest { Name = "World" });
+Console.WriteLine(response.Message); // Hello World!
+```
+
+### Client (Unity)
+
+```csharp
+// Works with any HttpMessageHandler -- plug in YetAnotherHttpHandler for HTTP/2
+var handler = new YetAnotherHttpHandler();
+var channel = new ConnectChannel(new HttpClient(handler), "https://api.example.com");
+var client = new GreeterServiceClient(channel);
+
+var response = await client.SayHelloAsync(new HelloRequest { Name = "Unity" });
+```
+
+## Streaming
+
+### Server Streaming
+
+The server sends multiple responses for a single request. The client receives an `IAsyncEnumerable<TResponse>`.
+
+```csharp
+// Server
+public override async IAsyncEnumerable<HelloResponse> SayHelloStream(
+    HelloRequest request,
+    ConnectContext context,
+    [EnumeratorCancellation] CancellationToken ct = default)
+{
+    for (int i = 0; i < 5; i++)
+    {
+        yield return new HelloResponse { Message = $"Hello {request.Name} #{i}" };
+        await Task.Delay(100, ct);
+    }
+}
+
+// Client
+await foreach (var response in client.SayHelloStreamAsync(new HelloRequest { Name = "World" }))
+{
+    Console.WriteLine(response.Message);
+}
+```
+
+### Client Streaming
+
+The client sends multiple requests and receives a single response. Uses `ClientStreamCall<TReq, TRes>`.
+
+```csharp
+// Server
+public override async Task<HelloResponse> CollectHellos(
+    IAsyncEnumerable<HelloRequest> requests,
+    ConnectContext context)
+{
+    var names = new List<string>();
+    await foreach (var request in requests)
+    {
+        names.Add(request.Name);
+    }
+    return new HelloResponse { Message = $"Hello {string.Join(", ", names)}!" };
+}
+
+// Client
+using var call = client.CollectHellosAsync();
+await call.SendAsync(new HelloRequest { Name = "Alice" });
+await call.SendAsync(new HelloRequest { Name = "Bob" });
+var response = await call.CloseAndReceiveAsync();
+Console.WriteLine(response.Message); // Hello Alice, Bob!
+```
+
+### Bidirectional Streaming
+
+Both client and server stream messages. Uses `BidiStreamCall<TReq, TRes>`.
+
+```csharp
+// Server
+public override async IAsyncEnumerable<HelloResponse> Chat(
+    IAsyncEnumerable<HelloRequest> requests,
+    ConnectContext context,
+    [EnumeratorCancellation] CancellationToken ct = default)
+{
+    await foreach (var request in requests.WithCancellation(ct))
+    {
+        yield return new HelloResponse { Message = $"Echo: {request.Name}" };
+    }
+}
+
+// Client
+using var call = client.ChatAsync();
+await call.SendAsync(new HelloRequest { Name = "Alice" });
+await call.SendAsync(new HelloRequest { Name = "Bob" });
+await foreach (var response in call.CompleteAndReadAsync())
+{
+    Console.WriteLine(response.Message);
+}
+```
+
+## Configuration
+
+### Compression
+
+Enable gzip compression for requests. Response compression is negotiated automatically via `Accept-Encoding`.
+
+```csharp
+var options = new ConnectChannelOptions
+{
+    RequestCompressor = new GzipCompressor(),  // compress outgoing requests
+    AcceptCompression = true,                  // accept compressed responses (default: true)
+};
+var channel = new ConnectChannel(new HttpClient(), "https://localhost:5000", channelOptions: options);
+```
+
+On the server side, gzip compression is registered automatically by `AddConnectServices()`.
+
+### Interceptors
+
+#### Client Interceptor
+
+```csharp
+public class AuthInterceptor : IClientInterceptor
+{
+    public async Task<IMessage> InterceptUnaryAsync(
+        UnaryRequestContext context,
+        Func<UnaryRequestContext, Task<IMessage>> next,
+        CancellationToken ct)
+    {
+        context.Headers["Authorization"] = "Bearer my-token";
+        return await next(context);
+    }
+}
+
+var options = new ConnectChannelOptions
+{
+    Interceptors = { new AuthInterceptor() }
+};
+var channel = new ConnectChannel(new HttpClient(), "https://localhost:5000", channelOptions: options);
+```
+
+#### Server Interceptor
+
+```csharp
+public class LoggingInterceptor : IServerInterceptor
+{
+    public async Task<IMessage> InterceptUnaryAsync(
+        UnaryServerContext context,
+        Func<UnaryServerContext, Task<IMessage>> next)
+    {
+        Console.WriteLine($"Calling {context.Procedure}");
+        var result = await next(context);
+        Console.WriteLine($"Completed {context.Procedure}");
+        return result;
+    }
+}
+
+builder.Services.AddConnectServices(options =>
+{
+    options.Interceptors.Add(new LoggingInterceptor());
+});
+```
+
+### Timeout
+
+Set a per-call timeout using `CallOptions`. The server enforces the deadline via `Connect-Timeout-Ms`.
+
+```csharp
+var response = await client.SayHelloAsync(
+    new HelloRequest { Name = "World" },
+    new CallOptions { Timeout = TimeSpan.FromSeconds(5) });
+```
+
+### JSON Codec
+
+Use JSON instead of Protobuf for the wire format.
+
+```csharp
+var channel = new ConnectChannel(
+    new HttpClient(),
+    "https://localhost:5000",
+    codec: new JsonCodec());
+```
+
+The server supports both `application/proto` and `application/json` content types automatically.
+
+### GET Requests
+
+For idempotent/safe RPCs, use HTTP GET to enable caching.
+
+```csharp
+var response = await client.SayHelloAsync(
+    new HelloRequest { Name = "World" },
+    new CallOptions { UseGet = true });
+```
+
+The server automatically registers GET endpoints for all unary methods. The request is encoded in query parameters (`?encoding=proto&message=...&base64=1&connect=v1`).
+
+### Health Checks
+
+Map the gRPC-compatible health check endpoint.
+
+```csharp
+builder.Services.AddSingleton<ConnectHealthService>();
+
+var app = builder.Build();
+app.MapConnectHealthCheck();
+
+// Optionally set per-service status
+var health = app.Services.GetRequiredService<ConnectHealthService>();
+health.SetStatus("example.GreeterService", HealthStatus.Serving);
+```
+
+Clients can check health via `POST /grpc.health.v1.Health/Check` with either Protobuf or JSON.
+
+### Service Reflection
+
+Enable service discovery for tooling and debugging.
+
+```csharp
+app.MapConnectReflection();
+```
+
+This exposes:
+- `GET /connect/v1/services` -- JSON list of registered services
+- `POST /grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo` -- gRPC reflection (list_services)
+
+### Custom Headers and Trailers
+
+```csharp
+// Client: send custom headers and read response trailers
+var callOptions = new CallOptions
+{
+    Headers = { ["X-Request-Id"] = "abc123" }
+};
+var response = await client.SayHelloAsync(new HelloRequest { Name = "World" }, callOptions);
+var trailer = callOptions.ResponseTrailers["my-trailer"];
+
+// Server: read request headers and set response trailers
+public override Task<HelloResponse> SayHello(HelloRequest request, ConnectContext context)
+{
+    var requestId = context.RequestHeaders["X-Request-Id"];
+    context.ResponseTrailers["my-trailer"] = "value";
+    return Task.FromResult(new HelloResponse { Message = $"Hello {request.Name}!" });
+}
+```
+
+### Error Handling
+
+Errors use the Connect protocol's error model with typed error codes.
+
+```csharp
+// Server: throw a ConnectException
+throw new ConnectException(ConnectCode.InvalidArgument, "name is required");
+
+// Server: include error details
+throw new ConnectException(
+    ConnectCode.FailedPrecondition,
+    "validation failed",
+    new[] { new ConnectErrorDetail("type.googleapis.com/example.Error", errorBytes) });
+
+// Client: catch ConnectException
+try
+{
+    var response = await client.SayHelloAsync(new HelloRequest());
+}
+catch (ConnectException ex)
+{
+    Console.WriteLine($"{ex.Code}: {ex.Message}");
+    foreach (var detail in ex.Details)
+    {
+        Console.WriteLine($"  {detail.Type}: {detail.Value.Length} bytes");
+    }
+}
+```
+
+## Architecture
+
+| Package | Target | Description |
+|---------|--------|-------------|
+| **ConnectNet** | .NET Standard 2.1 | Core library: codecs (`ICodec`, `ProtobufCodec`, `JsonCodec`), errors (`ConnectException`, `ConnectCode`), envelope framing, compression (`GzipCompressor`) |
+| **ConnectNet.Client** | .NET Standard 2.1 | Client library: `ConnectChannel`, `CallOptions`, `ClientStreamCall`, `BidiStreamCall` |
+| **ConnectNet.Server** | .NET 10 | Server library: ASP.NET Core integration, unary/streaming handlers, health checks, reflection |
+| **protoc-gen-connect-csharp** | Go | Code generation plugin for `protoc` |
+
+## Building
+
+```bash
+# Build all projects
+dotnet build
+
+# Run tests
+dotnet test
+
+# Build the protoc plugin
+cd tools/protoc-gen-connect-csharp
+go build -o protoc-gen-connect-csharp .
+```
+
+## License
+
+See [LICENSE](LICENSE) file.
