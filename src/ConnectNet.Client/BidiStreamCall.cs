@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
@@ -22,18 +23,21 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
     private readonly CancellationToken _ct;
     private readonly MemoryStream _buffer = new();
     private readonly ICodec _codec;
+    private readonly ConnectChannelOptions _channelOptions;
 
     internal BidiStreamCall(
         HttpClient httpClient,
         Uri baseUri,
         string procedure,
         ICodec codec,
+        ConnectChannelOptions channelOptions,
         CallOptions? options,
         CancellationToken ct)
     {
         _httpClient = httpClient;
         _uri = new Uri(baseUri, procedure);
         _codec = codec;
+        _channelOptions = channelOptions;
         _options = options;
         _ct = ct;
     }
@@ -41,7 +45,13 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
     public async Task SendAsync(TReq message)
     {
         var data = _codec.Serialize(message);
-        await Envelope.WriteAsync(_buffer, 0x00, data, _ct).ConfigureAwait(false);
+        byte flags = 0x00;
+        if (_channelOptions.RequestCompressor != null)
+        {
+            data = _channelOptions.RequestCompressor.Compress(data);
+            flags = Envelope.FlagCompressed;
+        }
+        await Envelope.WriteAsync(_buffer, flags, data, _ct).ConfigureAwait(false);
     }
 
     public async IAsyncEnumerable<TRes> CompleteAndReadAsync(
@@ -60,6 +70,15 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
         httpRequest.Content = new ByteArrayContent(bodyBytes);
         httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue($"application/connect+{_codec.Name}");
         httpRequest.Headers.Add("Connect-Protocol-Version", "1");
+
+        if (_channelOptions.RequestCompressor != null)
+        {
+            httpRequest.Headers.Add("Connect-Content-Encoding", _channelOptions.RequestCompressor.Name);
+        }
+        if (_channelOptions.AcceptCompression && _channelOptions.Decompressors.Count > 0)
+        {
+            httpRequest.Headers.Add("Connect-Accept-Encoding", string.Join(", ", _channelOptions.Decompressors.Select(d => d.Name)));
+        }
 
         if (_options?.Timeout is TimeSpan timeout)
         {
@@ -85,8 +104,12 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
         if (!httpResponse.IsSuccessStatusCode)
         {
             var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
-            throw ConnectException.FromJson(errorBody);
+            throw ConnectChannel.ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
         }
+
+        // Check if server is sending compressed envelopes
+        httpResponse.Headers.TryGetValues("Connect-Content-Encoding", out var connectContentEncodings);
+        var serverCompression = connectContentEncodings?.FirstOrDefault();
 
         using var responseStream = await httpResponse.Content.ReadAsStreamAsync().ConfigureAwait(false);
 
@@ -99,6 +122,15 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
             }
 
             var (flags, data) = envelope.Value;
+
+            // Decompress if flag indicates compression
+            if ((flags & Envelope.FlagCompressed) != 0 && serverCompression != null)
+            {
+                var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                    string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
+                if (decompressor != null)
+                    data = decompressor.Decompress(data);
+            }
 
             if ((flags & Envelope.FlagEndStream) != 0)
             {
@@ -113,10 +145,12 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
                     ConnectChannel.ExtractEndStreamTrailers(metadataElement, _options);
                 }
 
-                if (root.TryGetProperty("error", out var errorElement))
+                if (root.TryGetProperty("error", out var errorElement) && errorElement.ValueKind != JsonValueKind.Null)
                 {
                     var errorJson = errorElement.GetRawText();
-                    throw ConnectException.FromJson(errorJson);
+                    var connectError = ConnectException.TryFromJson(errorJson);
+                    if (connectError != null)
+                        throw connectError;
                 }
 
                 yield break;

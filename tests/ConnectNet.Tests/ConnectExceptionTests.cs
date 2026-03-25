@@ -87,4 +87,82 @@ public class ConnectExceptionTests
     {
         Assert.Equal(ConnectCode.Unknown, ConnectException.CodeFromString("bogus"));
     }
+
+    [Fact]
+    public void TryFromJson_NullJsonValue_ReturnsNull()
+    {
+        var result = ConnectException.TryFromJson("null");
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void FromJson_MissingCode_DefaultsToUnknown()
+    {
+        var ex = ConnectException.FromJson("{\"message\":\"oops\"}");
+        Assert.Equal(ConnectCode.Unknown, ex.Code);
+        Assert.Equal("oops", ex.Message);
+    }
+
+    [Fact]
+    public void FromJson_NullCode_DefaultsToUnknown()
+    {
+        var ex = ConnectException.FromJson("{\"code\":null,\"message\":\"oops\"}");
+        Assert.Equal(ConnectCode.Unknown, ex.Code);
+    }
+
+    [Fact]
+    public void FromJson_UnrecognizedCode_DefaultsToUnknown()
+    {
+        var ex = ConnectException.FromJson("{\"code\":\"bogus_code\",\"message\":\"oops\"}");
+        Assert.Equal(ConnectCode.Unknown, ex.Code);
+    }
+
+    [Fact]
+    public void FromJson_MissingMessage_DefaultsToEmpty()
+    {
+        var ex = ConnectException.FromJson("{\"code\":\"internal\"}");
+        Assert.Equal(ConnectCode.Internal, ex.Code);
+        Assert.Equal("", ex.Message);
+    }
+
+    [Fact]
+    public void FromJson_NullMessage_DefaultsToEmpty()
+    {
+        var ex = ConnectException.FromJson("{\"code\":\"internal\",\"message\":null}");
+        Assert.Equal("", ex.Message);
+    }
+
+    [Fact]
+    public void FromJson_UnrecognizedFields_Ignored()
+    {
+        var ex = ConnectException.FromJson("{\"code\":\"internal\",\"message\":\"err\",\"extra\":123}");
+        Assert.Equal(ConnectCode.Internal, ex.Code);
+    }
+
+    [Fact]
+    public void FromJson_NullDetails_Ignored()
+    {
+        var ex = ConnectException.FromJson("{\"code\":\"internal\",\"message\":\"err\",\"details\":null}");
+        Assert.Empty(ex.Details);
+    }
+
+    [Fact]
+    public void FromJson_DetailsWithDebugField_Ignored()
+    {
+        var ex = ConnectException.FromJson("{\"code\":\"internal\",\"message\":\"err\",\"details\":[{\"type\":\"t\",\"value\":\"AQ\",\"debug\":{}}]}");
+        Assert.Single(ex.Details);
+    }
+
+    [Fact]
+    public void TryFromJson_EmptyString_ReturnsNull()
+    {
+        Assert.Null(ConnectException.TryFromJson(""));
+        Assert.Null(ConnectException.TryFromJson("   "));
+    }
+
+    [Fact]
+    public void TryFromJson_InvalidJson_ReturnsNull()
+    {
+        Assert.Null(ConnectException.TryFromJson("not json"));
+    }
 }

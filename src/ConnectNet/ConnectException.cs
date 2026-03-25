@@ -44,31 +44,59 @@ public class ConnectException : Exception
         return Encoding.UTF8.GetString(stream.ToArray());
     }
 
+    public static ConnectException? TryFromJson(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object)
+                return null;
+
+            var code = ConnectCode.Unknown;
+            if (root.TryGetProperty("code", out var codeProp) && codeProp.ValueKind == JsonValueKind.String)
+            {
+                code = CodeFromString(codeProp.GetString() ?? "");
+            }
+
+            var message = "";
+            if (root.TryGetProperty("message", out var msgProp) && msgProp.ValueKind == JsonValueKind.String)
+            {
+                message = msgProp.GetString() ?? "";
+            }
+
+            var details = new List<ConnectErrorDetail>();
+            if (root.TryGetProperty("details", out var detailsProp) && detailsProp.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var d in detailsProp.EnumerateArray())
+                {
+                    if (d.ValueKind != JsonValueKind.Object)
+                        continue;
+                    if (!d.TryGetProperty("type", out var typeProp) || typeProp.ValueKind != JsonValueKind.String)
+                        continue;
+                    if (!d.TryGetProperty("value", out var valueProp) || valueProp.ValueKind != JsonValueKind.String)
+                        continue;
+                    var type = typeProp.GetString() ?? "";
+                    var value = Base64DecodeUnpadded(valueProp.GetString() ?? "");
+                    details.Add(new ConnectErrorDetail(type, value));
+                }
+            }
+
+            return new ConnectException(code, message, details);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     public static ConnectException FromJson(string json)
     {
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-
-        var code = root.TryGetProperty("code", out var codeProp)
-            ? CodeFromString(codeProp.GetString() ?? "")
-            : ConnectCode.Unknown;
-
-        var message = root.TryGetProperty("message", out var msgProp)
-            ? msgProp.GetString() ?? ""
-            : "";
-
-        var details = new List<ConnectErrorDetail>();
-        if (root.TryGetProperty("details", out var detailsProp) && detailsProp.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var d in detailsProp.EnumerateArray())
-            {
-                var type = d.GetProperty("type").GetString() ?? "";
-                var value = Base64DecodeUnpadded(d.GetProperty("value").GetString() ?? "");
-                details.Add(new ConnectErrorDetail(type, value));
-            }
-        }
-
-        return new ConnectException(code, message, details);
+        return TryFromJson(json) ?? new ConnectException(ConnectCode.Unknown);
     }
 
     public static int ToHttpStatus(ConnectCode code) => code switch
@@ -128,6 +156,26 @@ public class ConnectException : Exception
         }
         return Convert.FromBase64String(input);
     }
+
+    public static ConnectCode CodeFromHttpStatus(int statusCode) => statusCode switch
+    {
+        400 => ConnectCode.Internal,
+        401 => ConnectCode.Unauthenticated,
+        403 => ConnectCode.PermissionDenied,
+        404 => ConnectCode.Unimplemented,
+        408 => ConnectCode.DeadlineExceeded,
+        409 => ConnectCode.Aborted,
+        412 => ConnectCode.FailedPrecondition,
+        413 => ConnectCode.ResourceExhausted,
+        415 => ConnectCode.Internal,
+        429 => ConnectCode.Unavailable,
+        431 => ConnectCode.ResourceExhausted,
+        502 => ConnectCode.Unavailable,
+        503 => ConnectCode.Unavailable,
+        504 => ConnectCode.Unavailable,
+        _ when statusCode >= 200 && statusCode < 300 => ConnectCode.Unknown,
+        _ => ConnectCode.Unknown,
+    };
 
     public static ConnectCode CodeFromString(string s) => s switch
     {

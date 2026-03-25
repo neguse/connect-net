@@ -147,7 +147,7 @@ public class ConnectChannel
         if (!httpResponse.IsSuccessStatusCode)
         {
             var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
-            throw ConnectException.FromJson(errorBody);
+            throw ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
         }
 
         var responseBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
@@ -221,7 +221,7 @@ public class ConnectChannel
         if (!httpResponse.IsSuccessStatusCode)
         {
             var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
-            throw ConnectException.FromJson(errorBody);
+            throw ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
         }
 
         var responseBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
@@ -254,7 +254,7 @@ public class ConnectChannel
         where TReq : IMessage<TReq>
         where TRes : IMessage<TRes>, new()
     {
-        return new ClientStreamCall<TReq, TRes>(_httpClient, _baseUri, procedure, _codec, options, ct);
+        return new ClientStreamCall<TReq, TRes>(_httpClient, _baseUri, procedure, _codec, _channelOptions, options, ct);
     }
 
     public BidiStreamCall<TReq, TRes> BidiStreamAsync<TReq, TRes>(
@@ -262,7 +262,7 @@ public class ConnectChannel
         where TReq : IMessage<TReq>
         where TRes : IMessage<TRes>, new()
     {
-        return new BidiStreamCall<TReq, TRes>(_httpClient, _baseUri, procedure, _codec, options, ct);
+        return new BidiStreamCall<TReq, TRes>(_httpClient, _baseUri, procedure, _codec, _channelOptions, options, ct);
     }
 
     public async IAsyncEnumerable<TRes> ServerStreamAsync<TReq, TRes>(
@@ -319,17 +319,19 @@ public class ConnectChannel
 
         var httpResponse = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
 
-        if (!httpResponse.IsSuccessStatusCode)
-        {
-            var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
-            throw ConnectException.FromJson(errorBody);
-        }
-
-        // Extract response headers
+        // Extract response headers early so they are available even on error
         if (options != null)
         {
             ExtractResponseHeaders(httpResponse, options);
         }
+
+        if (!httpResponse.IsSuccessStatusCode)
+        {
+            var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+            throw ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
+        }
+
+        // Response headers already extracted above
 
         // Check if server is sending compressed envelopes
         httpResponse.Headers.TryGetValues("Connect-Content-Encoding", out var connectContentEncodings);
@@ -348,6 +350,15 @@ public class ConnectChannel
 
             var (flags, data) = envelope.Value;
 
+            // Decompress if flag indicates compression
+            if ((flags & Envelope.FlagCompressed) != 0 && serverCompression != null)
+            {
+                var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                    string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
+                if (decompressor != null)
+                    data = decompressor.Decompress(data);
+            }
+
             if ((flags & Envelope.FlagEndStream) != 0)
             {
                 // Parse EndStream JSON and extract trailers
@@ -361,23 +372,16 @@ public class ConnectChannel
                     ExtractEndStreamTrailers(metadataElement, options);
                 }
 
-                if (root.TryGetProperty("error", out var errorElement))
+                if (root.TryGetProperty("error", out var errorElement) && errorElement.ValueKind != JsonValueKind.Null)
                 {
                     var errorJson = errorElement.GetRawText();
-                    throw ConnectException.FromJson(errorJson);
+                    var connectError = ConnectException.TryFromJson(errorJson);
+                    if (connectError != null)
+                        throw connectError;
                 }
 
                 // Success — done streaming
                 yield break;
-            }
-
-            // Decompress if flag indicates compression
-            if ((flags & Envelope.FlagCompressed) != 0 && serverCompression != null)
-            {
-                var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
-                    string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
-                if (decompressor != null)
-                    data = decompressor.Decompress(data);
             }
 
             // Normal message envelope
@@ -420,5 +424,24 @@ public class ConnectChannel
                 }
             }
         }
+    }
+
+    internal static ConnectException ParseErrorResponse(string errorBody, int httpStatusCode)
+    {
+        if (!string.IsNullOrWhiteSpace(errorBody))
+        {
+            try
+            {
+                return ConnectException.FromJson(errorBody);
+            }
+            catch
+            {
+                // Not valid Connect error JSON, fall through to HTTP status mapping
+            }
+        }
+
+        // Map HTTP status code to Connect error code
+        var code = ConnectException.CodeFromHttpStatus(httpStatusCode);
+        return new ConnectException(code, $"HTTP {httpStatusCode}");
     }
 }
