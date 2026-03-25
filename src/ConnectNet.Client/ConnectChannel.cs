@@ -173,7 +173,9 @@ public class ConnectChannel
         if (contentType != null && !contentType.StartsWith($"application/{_codec.Name}", StringComparison.OrdinalIgnoreCase)
             && !contentType.StartsWith($"application/connect+{_codec.Name}", StringComparison.OrdinalIgnoreCase))
         {
-            throw new ConnectException(ConnectCode.Internal, $"unexpected content-type: {contentType}");
+            var ctCode = contentType.StartsWith("application/", StringComparison.OrdinalIgnoreCase)
+                ? ConnectCode.Internal : ConnectCode.Unknown;
+            throw new ConnectException(ctCode, $"unexpected content-type: {contentType}");
         }
 
         var responseBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
@@ -278,7 +280,9 @@ public class ConnectChannel
         if (contentType != null && !contentType.StartsWith($"application/{_codec.Name}", StringComparison.OrdinalIgnoreCase)
             && !contentType.StartsWith($"application/connect+{_codec.Name}", StringComparison.OrdinalIgnoreCase))
         {
-            throw new ConnectException(ConnectCode.Internal, $"unexpected content-type: {contentType}");
+            var ctCode = contentType.StartsWith("application/", StringComparison.OrdinalIgnoreCase)
+                ? ConnectCode.Internal : ConnectCode.Unknown;
+            throw new ConnectException(ctCode, $"unexpected content-type: {contentType}");
         }
 
         var responseBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
@@ -418,7 +422,7 @@ public class ConnectChannel
         var expectedStreamContentType = $"application/connect+{_codec.Name}";
         if (streamContentType != null && !string.Equals(streamContentType, expectedStreamContentType, StringComparison.OrdinalIgnoreCase))
         {
-            throw new ConnectException(ConnectCode.Unknown, $"unexpected content-type: {streamContentType}");
+            throw new ConnectException(ConnectCode.Internal, $"unexpected content-type: {streamContentType}");
         }
 
         // Check if server is sending compressed envelopes
