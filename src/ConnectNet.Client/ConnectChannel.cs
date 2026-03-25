@@ -430,17 +430,11 @@ public class ConnectChannel
     {
         if (!string.IsNullOrWhiteSpace(errorBody))
         {
-            try
-            {
-                return ConnectException.FromJson(errorBody);
-            }
-            catch
-            {
-                // Not valid Connect error JSON, fall through to HTTP status mapping
-            }
+            var parsed = ConnectException.TryFromJson(errorBody);
+            if (parsed != null)
+                return parsed;
         }
 
-        // Map HTTP status code to Connect error code
         var code = ConnectException.CodeFromHttpStatus(httpStatusCode);
         return new ConnectException(code, $"HTTP {httpStatusCode}");
     }

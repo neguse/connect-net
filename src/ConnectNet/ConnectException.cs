@@ -159,21 +159,16 @@ public class ConnectException : Exception
 
     public static ConnectCode CodeFromHttpStatus(int statusCode) => statusCode switch
     {
-        400 => ConnectCode.Internal,
+        400 => ConnectCode.InvalidArgument,
         401 => ConnectCode.Unauthenticated,
         403 => ConnectCode.PermissionDenied,
         404 => ConnectCode.Unimplemented,
         408 => ConnectCode.DeadlineExceeded,
-        409 => ConnectCode.Aborted,
-        412 => ConnectCode.FailedPrecondition,
-        413 => ConnectCode.ResourceExhausted,
-        415 => ConnectCode.Internal,
         429 => ConnectCode.Unavailable,
-        431 => ConnectCode.ResourceExhausted,
+        431 => ConnectCode.Unavailable,
         502 => ConnectCode.Unavailable,
         503 => ConnectCode.Unavailable,
         504 => ConnectCode.Unavailable,
-        _ when statusCode >= 200 && statusCode < 300 => ConnectCode.Unknown,
         _ => ConnectCode.Unknown,
     };
 

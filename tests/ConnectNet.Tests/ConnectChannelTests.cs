@@ -94,6 +94,36 @@ public class ConnectChannelTests
         Assert.Equal(5000, capturedTimeout!.Value.TotalMilliseconds);
     }
 
+    [Fact]
+    public void ParseErrorResponse_ValidConnectJson_UsesJsonCode()
+    {
+        var error = ConnectChannel.ParseErrorResponse(
+            "{\"code\":\"not_found\",\"message\":\"gone\"}", 500);
+        Assert.Equal(ConnectCode.NotFound, error.Code);
+        Assert.Equal("gone", error.Message);
+    }
+
+    [Fact]
+    public void ParseErrorResponse_InvalidJson_UsesHttpStatus()
+    {
+        var error = ConnectChannel.ParseErrorResponse("not json", 401);
+        Assert.Equal(ConnectCode.Unauthenticated, error.Code);
+    }
+
+    [Fact]
+    public void ParseErrorResponse_EmptyBody_UsesHttpStatus()
+    {
+        var error = ConnectChannel.ParseErrorResponse("", 503);
+        Assert.Equal(ConnectCode.Unavailable, error.Code);
+    }
+
+    [Fact]
+    public void ParseErrorResponse_NullJsonValue_UsesHttpStatus()
+    {
+        var error = ConnectChannel.ParseErrorResponse("null", 404);
+        Assert.Equal(ConnectCode.Unimplemented, error.Code);
+    }
+
     private class MockHttpHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _handler;

@@ -165,4 +165,28 @@ public class ConnectExceptionTests
     {
         Assert.Null(ConnectException.TryFromJson("not json"));
     }
+
+    [Theory]
+    [InlineData(400, ConnectCode.InvalidArgument)]
+    [InlineData(401, ConnectCode.Unauthenticated)]
+    [InlineData(403, ConnectCode.PermissionDenied)]
+    [InlineData(404, ConnectCode.Unimplemented)]
+    [InlineData(408, ConnectCode.DeadlineExceeded)]
+    [InlineData(409, ConnectCode.Unknown)]
+    [InlineData(412, ConnectCode.Unknown)]
+    [InlineData(413, ConnectCode.Unknown)]
+    [InlineData(415, ConnectCode.Unknown)]
+    [InlineData(429, ConnectCode.Unavailable)]
+    [InlineData(431, ConnectCode.Unavailable)]
+    [InlineData(502, ConnectCode.Unavailable)]
+    [InlineData(503, ConnectCode.Unavailable)]
+    [InlineData(504, ConnectCode.Unavailable)]
+    [InlineData(500, ConnectCode.Unknown)]
+    [InlineData(501, ConnectCode.Unknown)]
+    [InlineData(422, ConnectCode.Unknown)]
+    [InlineData(505, ConnectCode.Unknown)]
+    public void CodeFromHttpStatus_MapsPerConnectSpec(int httpStatus, ConnectCode expectedCode)
+    {
+        Assert.Equal(expectedCode, ConnectException.CodeFromHttpStatus(httpStatus));
+    }
 }
