@@ -94,7 +94,16 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
 
         if (!httpResponse.IsSuccessStatusCode)
         {
-            var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var errorBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            var errorContentEncoding = httpResponse.Content.Headers.ContentEncoding.FirstOrDefault();
+            if (errorContentEncoding != null)
+            {
+                var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                    string.Equals(d.Name, errorContentEncoding, StringComparison.OrdinalIgnoreCase));
+                if (decompressor != null)
+                    errorBytes = decompressor.Decompress(errorBytes);
+            }
+            var errorBody = Encoding.UTF8.GetString(errorBytes);
             throw ConnectChannel.ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
         }
 
@@ -150,7 +159,7 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
             }
 
             // Normal message envelope — should be the single response
-            result = _codec.Deserialize<TRes>(data);
+            result = data.Length > 0 ? _codec.Deserialize<TRes>(data) : new TRes();
         }
 
         if (result == null)

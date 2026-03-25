@@ -103,7 +103,16 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
 
         if (!httpResponse.IsSuccessStatusCode)
         {
-            var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var errorBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            var errorContentEncoding = httpResponse.Content.Headers.ContentEncoding.FirstOrDefault();
+            if (errorContentEncoding != null)
+            {
+                var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                    string.Equals(d.Name, errorContentEncoding, StringComparison.OrdinalIgnoreCase));
+                if (decompressor != null)
+                    errorBytes = decompressor.Decompress(errorBytes);
+            }
+            var errorBody = Encoding.UTF8.GetString(errorBytes);
             throw ConnectChannel.ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
         }
 
@@ -156,7 +165,7 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
                 yield break;
             }
 
-            var message = _codec.Deserialize<TRes>(data);
+            var message = data.Length > 0 ? _codec.Deserialize<TRes>(data) : new TRes();
             yield return message;
         }
     }

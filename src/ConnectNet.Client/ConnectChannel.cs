@@ -146,7 +146,16 @@ public class ConnectChannel
 
         if (!httpResponse.IsSuccessStatusCode)
         {
-            var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var errorBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            var errorContentEncoding = httpResponse.Content.Headers.ContentEncoding.FirstOrDefault();
+            if (errorContentEncoding != null)
+            {
+                var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                    string.Equals(d.Name, errorContentEncoding, StringComparison.OrdinalIgnoreCase));
+                if (decompressor != null)
+                    errorBytes = decompressor.Decompress(errorBytes);
+            }
+            var errorBody = Encoding.UTF8.GetString(errorBytes);
             throw ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
         }
 
@@ -161,6 +170,9 @@ public class ConnectChannel
             if (decompressor != null)
                 responseBytes = decompressor.Decompress(responseBytes);
         }
+
+        if (responseBytes.Length == 0)
+            return new TRes();
 
         var result = _codec.Deserialize<TRes>(responseBytes);
 
@@ -220,7 +232,16 @@ public class ConnectChannel
 
         if (!httpResponse.IsSuccessStatusCode)
         {
-            var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var errorBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            var errorContentEncoding = httpResponse.Content.Headers.ContentEncoding.FirstOrDefault();
+            if (errorContentEncoding != null)
+            {
+                var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                    string.Equals(d.Name, errorContentEncoding, StringComparison.OrdinalIgnoreCase));
+                if (decompressor != null)
+                    errorBytes = decompressor.Decompress(errorBytes);
+            }
+            var errorBody = Encoding.UTF8.GetString(errorBytes);
             throw ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
         }
 
@@ -235,6 +256,9 @@ public class ConnectChannel
             if (decompressor != null)
                 responseBytes = decompressor.Decompress(responseBytes);
         }
+
+        if (responseBytes.Length == 0)
+            return new TRes();
 
         var result = _codec.Deserialize<TRes>(responseBytes);
 
@@ -327,7 +351,16 @@ public class ConnectChannel
 
         if (!httpResponse.IsSuccessStatusCode)
         {
-            var errorBody = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var errorBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            var errorContentEncoding = httpResponse.Content.Headers.ContentEncoding.FirstOrDefault();
+            if (errorContentEncoding != null)
+            {
+                var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                    string.Equals(d.Name, errorContentEncoding, StringComparison.OrdinalIgnoreCase));
+                if (decompressor != null)
+                    errorBytes = decompressor.Decompress(errorBytes);
+            }
+            var errorBody = Encoding.UTF8.GetString(errorBytes);
             throw ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
         }
 
@@ -385,7 +418,7 @@ public class ConnectChannel
             }
 
             // Normal message envelope
-            var message = _codec.Deserialize<TRes>(data);
+            var message = data.Length > 0 ? _codec.Deserialize<TRes>(data) : new TRes();
             yield return message;
         }
     }
@@ -428,14 +461,14 @@ public class ConnectChannel
 
     internal static ConnectException ParseErrorResponse(string errorBody, int httpStatusCode)
     {
+        var fallbackCode = ConnectException.CodeFromHttpStatus(httpStatusCode);
         if (!string.IsNullOrWhiteSpace(errorBody))
         {
-            var parsed = ConnectException.TryFromJson(errorBody);
+            var parsed = ConnectException.TryFromJson(errorBody, fallbackCode);
             if (parsed != null)
                 return parsed;
         }
 
-        var code = ConnectException.CodeFromHttpStatus(httpStatusCode);
-        return new ConnectException(code, $"HTTP {httpStatusCode}");
+        return new ConnectException(fallbackCode, $"HTTP {httpStatusCode}");
     }
 }

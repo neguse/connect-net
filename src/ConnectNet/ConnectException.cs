@@ -44,7 +44,7 @@ public class ConnectException : Exception
         return Encoding.UTF8.GetString(stream.ToArray());
     }
 
-    public static ConnectException? TryFromJson(string json)
+    public static ConnectException? TryFromJson(string json, ConnectCode fallbackCode = ConnectCode.Unknown)
     {
         if (string.IsNullOrWhiteSpace(json))
             return null;
@@ -57,10 +57,10 @@ public class ConnectException : Exception
             if (root.ValueKind != JsonValueKind.Object)
                 return null;
 
-            var code = ConnectCode.Unknown;
+            var code = fallbackCode;
             if (root.TryGetProperty("code", out var codeProp) && codeProp.ValueKind == JsonValueKind.String)
             {
-                code = CodeFromString(codeProp.GetString() ?? "");
+                code = TryCodeFromString(codeProp.GetString() ?? "") ?? fallbackCode;
             }
 
             var message = "";
@@ -159,17 +159,37 @@ public class ConnectException : Exception
 
     public static ConnectCode CodeFromHttpStatus(int statusCode) => statusCode switch
     {
-        400 => ConnectCode.InvalidArgument,
+        400 => ConnectCode.Internal,
         401 => ConnectCode.Unauthenticated,
         403 => ConnectCode.PermissionDenied,
         404 => ConnectCode.Unimplemented,
         408 => ConnectCode.DeadlineExceeded,
         429 => ConnectCode.Unavailable,
-        431 => ConnectCode.Unavailable,
         502 => ConnectCode.Unavailable,
         503 => ConnectCode.Unavailable,
         504 => ConnectCode.Unavailable,
         _ => ConnectCode.Unknown,
+    };
+
+    public static ConnectCode? TryCodeFromString(string s) => s switch
+    {
+        "canceled" => ConnectCode.Canceled,
+        "unknown" => ConnectCode.Unknown,
+        "invalid_argument" => ConnectCode.InvalidArgument,
+        "deadline_exceeded" => ConnectCode.DeadlineExceeded,
+        "not_found" => ConnectCode.NotFound,
+        "already_exists" => ConnectCode.AlreadyExists,
+        "permission_denied" => ConnectCode.PermissionDenied,
+        "resource_exhausted" => ConnectCode.ResourceExhausted,
+        "failed_precondition" => ConnectCode.FailedPrecondition,
+        "aborted" => ConnectCode.Aborted,
+        "out_of_range" => ConnectCode.OutOfRange,
+        "unimplemented" => ConnectCode.Unimplemented,
+        "internal" => ConnectCode.Internal,
+        "unavailable" => ConnectCode.Unavailable,
+        "data_loss" => ConnectCode.DataLoss,
+        "unauthenticated" => ConnectCode.Unauthenticated,
+        _ => null,
     };
 
     public static ConnectCode CodeFromString(string s) => s switch

@@ -167,7 +167,7 @@ public class ConnectExceptionTests
     }
 
     [Theory]
-    [InlineData(400, ConnectCode.InvalidArgument)]
+    [InlineData(400, ConnectCode.Internal)]
     [InlineData(401, ConnectCode.Unauthenticated)]
     [InlineData(403, ConnectCode.PermissionDenied)]
     [InlineData(404, ConnectCode.Unimplemented)]
@@ -177,7 +177,7 @@ public class ConnectExceptionTests
     [InlineData(413, ConnectCode.Unknown)]
     [InlineData(415, ConnectCode.Unknown)]
     [InlineData(429, ConnectCode.Unavailable)]
-    [InlineData(431, ConnectCode.Unavailable)]
+    [InlineData(431, ConnectCode.Unknown)]
     [InlineData(502, ConnectCode.Unavailable)]
     [InlineData(503, ConnectCode.Unavailable)]
     [InlineData(504, ConnectCode.Unavailable)]
