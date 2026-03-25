@@ -10,5 +10,6 @@
     <ProjectReference Include="../../src/ConnectNet.Client/ConnectNet.Client.csproj" />
     <ProjectReference Include="../../src/ConnectNet.Server/ConnectNet.Server.csproj" />
     <ProjectReference Include="../ConnectNet.Conformance.Proto/ConnectNet.Conformance.Proto.csproj" />
+    <ProjectReference Include="../../references/YetAnotherHttpHandler/src/YetAnotherHttpHandler/YetAnotherHttpHandler.csproj" />
   </ItemGroup>
 </Project>

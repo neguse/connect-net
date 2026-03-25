@@ -6,6 +6,7 @@ using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
+using Cysharp.Net.Http;
 using System.Threading.Tasks;
 using Connectrpc.Conformance.V1;
 using ConnectNet;
@@ -194,10 +195,37 @@ internal static class ClientHarness
 
     private static HttpClient CreateHttpClient(ClientCompatRequest request)
     {
-        var httpVersion = request.HttpVersion == Connectrpc.Conformance.V1.HTTPVersion._2
-            ? System.Net.HttpVersion.Version20
-            : System.Net.HttpVersion.Version11;
+        var useHttp2 = request.HttpVersion == Connectrpc.Conformance.V1.HTTPVersion._2;
 
+        if (useHttp2)
+        {
+            var handler = new YetAnotherHttpHandler
+            {
+                Http2Only = true,
+            };
+
+            if (!request.ServerTlsCert.IsEmpty)
+            {
+                // Convert DER certificate to PEM format for YAHA
+                var serverCertPem = ConvertDerToPem(request.ServerTlsCert.ToByteArray());
+                handler.RootCertificates = serverCertPem;
+
+                if (request.ClientTlsCreds != null)
+                {
+                    handler.ClientAuthCertificates = Encoding.UTF8.GetString(request.ClientTlsCreds.Cert.Span);
+                    handler.ClientAuthKey = Encoding.UTF8.GetString(request.ClientTlsCreds.Key.Span);
+                }
+            }
+            else
+            {
+                // h2c (HTTP/2 cleartext) — no TLS
+                // YAHA handles h2c when Http2Only=true and no TLS is configured
+            }
+
+            return new HttpClient(handler);
+        }
+
+        // HTTP/1.1: standard SocketsHttpHandler
         if (!request.ServerTlsCert.IsEmpty)
         {
             var serverCertBytes = request.ServerTlsCert.ToByteArray();
@@ -208,13 +236,11 @@ internal static class ClientHarness
                 if (errors == SslPolicyErrors.None)
                     return true;
 
-                // Trust the specific server certificate
                 var trustedCert = X509CertificateLoader.LoadCertificate(serverCertBytes);
                 var cert2 = cert != null ? new X509Certificate2(cert) : null;
                 if (cert2 != null && cert2.Thumbprint == trustedCert.Thumbprint)
                     return true;
 
-                // Try chain validation with the trusted cert
                 if (chain != null && cert2 != null)
                 {
                     chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
@@ -236,7 +262,7 @@ internal static class ClientHarness
 
             return new HttpClient(handler)
             {
-                DefaultRequestVersion = httpVersion,
+                DefaultRequestVersion = System.Net.HttpVersion.Version11,
                 DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
             };
         }
@@ -244,9 +270,22 @@ internal static class ClientHarness
         var defaultHandler = new SocketsHttpHandler();
         return new HttpClient(defaultHandler)
         {
-            DefaultRequestVersion = httpVersion,
+            DefaultRequestVersion = System.Net.HttpVersion.Version11,
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
         };
+    }
+
+    private static string ConvertDerToPem(byte[] derBytes)
+    {
+        var base64 = Convert.ToBase64String(derBytes);
+        var sb = new StringBuilder();
+        sb.AppendLine("-----BEGIN CERTIFICATE-----");
+        for (int i = 0; i < base64.Length; i += 64)
+        {
+            sb.AppendLine(base64.Substring(i, Math.Min(64, base64.Length - i)));
+        }
+        sb.AppendLine("-----END CERTIFICATE-----");
+        return sb.ToString();
     }
 
     private static async Task<ClientResponseResult> ExecuteUnaryAsync(
