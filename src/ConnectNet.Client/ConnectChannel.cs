@@ -413,6 +413,14 @@ public class ConnectChannel
 
         // Response headers already extracted above
 
+        // Validate streaming Content-Type
+        var streamContentType = httpResponse.Content.Headers.ContentType?.MediaType;
+        var expectedStreamContentType = $"application/connect+{_codec.Name}";
+        if (streamContentType != null && !string.Equals(streamContentType, expectedStreamContentType, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConnectException(ConnectCode.Unknown, $"unexpected content-type: {streamContentType}");
+        }
+
         // Check if server is sending compressed envelopes
         httpResponse.Headers.TryGetValues("Connect-Content-Encoding", out var connectContentEncodings);
         var serverCompression = connectContentEncodings?.FirstOrDefault();

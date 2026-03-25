@@ -287,8 +287,7 @@ internal static class ClientHarness
                 var typedRequest = requestMsg.Unpack<IdempotentUnaryRequest>();
                 var response = await channel.UnaryAsync<IdempotentUnaryRequest, IdempotentUnaryResponse>(
                     procedure, typedRequest, callOptions, effectiveToken).ConfigureAwait(false);
-                if (response.Payload != null)
-                    payloads.Add(response.Payload);
+                payloads.Add(response.Payload ?? new ConformancePayload());
             }
             else if (procedure.EndsWith("/Unimplemented"))
             {
@@ -301,8 +300,7 @@ internal static class ClientHarness
                 var typedRequest = requestMsg.Unpack<UnaryRequest>();
                 var response = await channel.UnaryAsync<UnaryRequest, UnaryResponse>(
                     procedure, typedRequest, callOptions, effectiveToken).ConfigureAwait(false);
-                if (response.Payload != null)
-                    payloads.Add(response.Payload);
+                payloads.Add(response.Payload ?? new ConformancePayload());
             }
         }
         catch (ConnectException ex)
@@ -373,8 +371,7 @@ internal static class ClientHarness
             await foreach (var response in channel.ServerStreamAsync<ServerStreamRequest, ServerStreamResponse>(
                 procedure, requestMsg, callOptions, effectiveToken).ConfigureAwait(false))
             {
-                if (response.Payload != null)
-                    payloads.Add(response.Payload);
+                payloads.Add(response.Payload ?? new ConformancePayload());
 
                 if (afterNumResponses.HasValue && payloads.Count >= afterNumResponses.Value)
                 {
@@ -479,8 +476,7 @@ internal static class ClientHarness
             }
 
             var response = await call.CloseAndReceiveAsync().ConfigureAwait(false);
-            if (response.Payload != null)
-                payloads.Add(response.Payload);
+            payloads.Add(response.Payload ?? new ConformancePayload());
         }
         catch (ConnectException ex)
         {
@@ -586,8 +582,7 @@ internal static class ClientHarness
 
             await foreach (var response in call.CompleteAndReadAsync(effectiveToken).ConfigureAwait(false))
             {
-                if (response.Payload != null)
-                    payloads.Add(response.Payload);
+                payloads.Add(response.Payload ?? new ConformancePayload());
 
                 if (afterNumResponses.HasValue && payloads.Count >= afterNumResponses.Value)
                 {
