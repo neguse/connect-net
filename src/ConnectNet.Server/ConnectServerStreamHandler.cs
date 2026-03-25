@@ -22,6 +22,17 @@ internal static class ConnectServerStreamHandler
         var request = httpContext.Request;
         var response = httpContext.Response;
 
+        // Validate Content-Type first (415 takes priority per HTTP spec)
+        var contentType = request.ContentType;
+        if (contentType == null || !contentType.StartsWith($"application/connect+{codec.Name}", StringComparison.OrdinalIgnoreCase))
+        {
+            response.StatusCode = 415;
+            response.ContentType = "application/json";
+            var error = new ConnectException(ConnectCode.Unknown, $"unsupported content type: {contentType}");
+            await response.WriteAsync(error.ToJson());
+            return;
+        }
+
         // Validate Connect-Protocol-Version
         if (!request.Headers.TryGetValue("Connect-Protocol-Version", out var version) || version != "1")
         {
@@ -32,23 +43,29 @@ internal static class ConnectServerStreamHandler
             return;
         }
 
-        // Validate Content-Type
-        var contentType = request.ContentType;
-        if (contentType == null || !contentType.StartsWith($"application/connect+{codec.Name}", StringComparison.OrdinalIgnoreCase))
-        {
-            response.StatusCode = 415;
-            response.ContentType = "application/json";
-            var error = new ConnectException(ConnectCode.InvalidArgument, $"unsupported content type: {contentType}");
-            await response.WriteAsync(error.ToJson());
-            return;
-        }
-
         // Resolve compressor registry from DI (optional)
         var compressorRegistry = httpContext.RequestServices.GetService<ConnectCompressorRegistry>();
 
         // Check if client sends compressed envelopes
         request.Headers.TryGetValue("Connect-Content-Encoding", out var requestContentEncoding);
         var requestCompression = requestContentEncoding.FirstOrDefault();
+
+        // Validate that the requested compression is supported
+        if (!string.IsNullOrEmpty(requestCompression) && requestCompression != "identity")
+        {
+            if (compressorRegistry?.Get(requestCompression!) == null)
+            {
+                response.StatusCode = 200;
+                response.ContentType = $"application/connect+{codec.Name}";
+                var errContext = new ConnectContext();
+                var errEndStream = BuildEndStreamJson(
+                    new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {requestCompression}"), errContext);
+                await Envelope.WriteAsync(response.Body, Envelope.FlagEndStream,
+                    Encoding.UTF8.GetBytes(errEndStream), httpContext.RequestAborted);
+                await response.Body.FlushAsync(httpContext.RequestAborted);
+                return;
+            }
+        }
 
         // Find a response compressor that the client accepts
         ICompressor? responseCompressor = null;
@@ -85,32 +102,54 @@ internal static class ConnectServerStreamHandler
                 var envelope = await Envelope.ReadAsync(request.Body, ct);
                 if (envelope == null)
                 {
-                    response.StatusCode = 400;
-                    response.ContentType = "application/json";
-                    var error = new ConnectException(ConnectCode.InvalidArgument, "empty request body");
-                    await response.WriteAsync(error.ToJson());
-                    return;
+                    throw new ConnectException(ConnectCode.Unimplemented, "empty request body");
                 }
 
                 var (flags, data) = envelope.Value;
 
                 // Decompress request envelope if compressed
-                if ((flags & Envelope.FlagCompressed) != 0 && !string.IsNullOrEmpty(requestCompression))
+                if ((flags & Envelope.FlagCompressed) != 0)
                 {
+                    if (string.IsNullOrEmpty(requestCompression) || requestCompression == "identity")
+                    {
+                        throw new ConnectException(ConnectCode.Internal, "received compressed message but compression is identity or not specified");
+                    }
                     var decompressor = compressorRegistry?.Get(requestCompression!);
                     if (decompressor != null)
                     {
                         data = decompressor.Decompress(data);
                     }
+                    else
+                    {
+                        throw new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {requestCompression}");
+                    }
+                }
+
+                // Enforce message size limit
+                var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
+                if (serverOptions != null && serverOptions.MessageReceiveLimit > 0 && data.Length > serverOptions.MessageReceiveLimit)
+                {
+                    throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {data.Length} exceeds limit {serverOptions.MessageReceiveLimit}");
                 }
 
                 requestMessage = codec.Deserialize(data, method.RequestParser);
+
+                // Check for unexpected additional envelopes (server stream expects exactly one request)
+                var extraEnvelope = await Envelope.ReadAsync(request.Body, ct);
+                if (extraEnvelope != null)
+                {
+                    throw new ConnectException(ConnectCode.Unimplemented, "server stream received multiple request messages");
+                }
             }
             catch (ConnectException ex)
             {
-                response.StatusCode = ConnectException.ToHttpStatus(ex.Code);
-                response.ContentType = "application/json";
-                await response.WriteAsync(ex.ToJson());
+                // For streaming, return error as EndStream envelope with HTTP 200
+                response.StatusCode = 200;
+                response.ContentType = $"application/connect+{codec.Name}";
+                var errContext = new ConnectContext(cancellationToken: ct);
+                var errEndStream = BuildEndStreamJson(ex, errContext);
+                await Envelope.WriteAsync(response.Body, Envelope.FlagEndStream, Encoding.UTF8.GetBytes(errEndStream), httpContext.RequestAborted);
+                await response.Body.FlushAsync(httpContext.RequestAborted);
                 return;
             }
 
@@ -124,7 +163,7 @@ internal static class ConnectServerStreamHandler
                 response.Headers["Connect-Content-Encoding"] = responseCompressor.Name;
             }
 
-            var requestHeaders = new Dictionary<string, string>();
+            var requestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var header in request.Headers)
             {
                 requestHeaders[header.Key] = header.Value.ToString();

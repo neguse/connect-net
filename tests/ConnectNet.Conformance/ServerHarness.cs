@@ -72,7 +72,13 @@ internal static class ServerHarness
         var typeRegistry = Google.Protobuf.Reflection.TypeRegistry.FromFiles(
             Connectrpc.Conformance.V1.ServiceReflection.Descriptor,
             Connectrpc.Conformance.V1.ConfigReflection.Descriptor);
-        builder.Services.AddConnectServices(typeRegistry: typeRegistry);
+        builder.Services.AddConnectServices(options =>
+        {
+            if (request.MessageReceiveLimit > 0)
+            {
+                options.MessageReceiveLimit = request.MessageReceiveLimit;
+            }
+        }, typeRegistry: typeRegistry);
         builder.Services.AddSingleton<ConformanceServiceImpl>();
 
         var app = builder.Build();

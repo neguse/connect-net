@@ -18,4 +18,5 @@ features:
     - STREAM_TYPE_FULL_DUPLEX_BIDI_STREAM
     - STREAM_TYPE_HALF_DUPLEX_BIDI_STREAM
   supportsConnectGet: true
+  supportsMessageReceiveLimit: true
   supportsTlsClientCerts: false

@@ -10,6 +10,12 @@ namespace ConnectNet.Server;
 public class ConnectServerOptions
 {
     public List<IServerInterceptor> Interceptors { get; } = new();
+
+    /// <summary>
+    /// Maximum allowed size in bytes for incoming messages. 0 means no limit.
+    /// When set, messages exceeding this size will be rejected with ResourceExhausted.
+    /// </summary>
+    public uint MessageReceiveLimit { get; set; }
 }
 
 public static class ConnectServiceExtensions

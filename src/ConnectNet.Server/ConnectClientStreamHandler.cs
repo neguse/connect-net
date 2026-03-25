@@ -24,23 +24,23 @@ internal static class ConnectClientStreamHandler
         var request = httpContext.Request;
         var response = httpContext.Response;
 
+        // Validate Content-Type first (415 takes priority per HTTP spec)
+        var contentType = request.ContentType;
+        if (contentType == null || !contentType.StartsWith($"application/connect+{codec.Name}", StringComparison.OrdinalIgnoreCase))
+        {
+            response.StatusCode = 415;
+            response.ContentType = "application/json";
+            var error = new ConnectException(ConnectCode.Unknown, $"unsupported content type: {contentType}");
+            await response.WriteAsync(error.ToJson());
+            return;
+        }
+
         // Validate Connect-Protocol-Version
         if (!request.Headers.TryGetValue("Connect-Protocol-Version", out var version) || version != "1")
         {
             response.StatusCode = 400;
             response.ContentType = "application/json";
             var error = new ConnectException(ConnectCode.InvalidArgument, "missing or invalid Connect-Protocol-Version header");
-            await response.WriteAsync(error.ToJson());
-            return;
-        }
-
-        // Validate Content-Type
-        var contentType = request.ContentType;
-        if (contentType == null || !contentType.StartsWith($"application/connect+{codec.Name}", StringComparison.OrdinalIgnoreCase))
-        {
-            response.StatusCode = 415;
-            response.ContentType = "application/json";
-            var error = new ConnectException(ConnectCode.InvalidArgument, $"unsupported content type: {contentType}");
             await response.WriteAsync(error.ToJson());
             return;
         }
@@ -102,7 +102,7 @@ internal static class ConnectClientStreamHandler
                 response.Headers["Connect-Content-Encoding"] = responseCompressor.Name;
             }
 
-            var requestHeaders = new Dictionary<string, string>();
+            var requestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var header in request.Headers)
             {
                 requestHeaders[header.Key] = header.Value.ToString();
@@ -112,7 +112,9 @@ internal static class ConnectClientStreamHandler
 
             try
             {
-                var requestStream = ReadRequestMessages(request.Body, method.RequestParser, codec, requestCompression, compressorRegistry, ct);
+                var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
+                var msgLimit = serverOptions?.MessageReceiveLimit ?? 0;
+                var requestStream = ReadRequestMessages(request.Body, method.RequestParser, codec, requestCompression, compressorRegistry, msgLimit, ct);
                 var result = await handler(service, requestStream, context);
 
                 // Write response headers from context before body
@@ -182,6 +184,7 @@ internal static class ConnectClientStreamHandler
         ICodec codec,
         string? requestCompression,
         ConnectCompressorRegistry? compressorRegistry,
+        uint messageReceiveLimit,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         while (true)
@@ -202,13 +205,27 @@ internal static class ConnectClientStreamHandler
             }
 
             // Decompress if flag indicates compression
-            if ((flags & Envelope.FlagCompressed) != 0 && !string.IsNullOrEmpty(requestCompression))
+            if ((flags & Envelope.FlagCompressed) != 0)
             {
+                if (string.IsNullOrEmpty(requestCompression) || requestCompression == "identity")
+                {
+                    throw new ConnectException(ConnectCode.Internal, "received compressed message but compression is identity or not specified");
+                }
                 var decompressor = compressorRegistry?.Get(requestCompression!);
                 if (decompressor != null)
                 {
                     data = decompressor.Decompress(data);
                 }
+                else
+                {
+                    throw new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {requestCompression}");
+                }
+            }
+
+            // Enforce message size limit after decompression
+            if (messageReceiveLimit > 0 && data.Length > messageReceiveLimit)
+            {
+                throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {data.Length} exceeds limit {messageReceiveLimit}");
             }
 
             var message = codec.Deserialize(data, parser);

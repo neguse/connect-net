@@ -21,23 +21,23 @@ internal static class ConnectUnaryHandler
         var request = httpContext.Request;
         var response = httpContext.Response;
 
+        // Validate Content-Type first (415 takes priority per HTTP spec)
+        var contentType = request.ContentType;
+        if (contentType == null || !contentType.StartsWith($"application/{codec.Name}", StringComparison.OrdinalIgnoreCase))
+        {
+            response.StatusCode = 415;
+            response.ContentType = "application/json";
+            var error = new ConnectException(ConnectCode.Unknown, $"unsupported content type: {contentType}");
+            await response.WriteAsync(error.ToJson());
+            return;
+        }
+
         // Validate Connect-Protocol-Version
         if (!request.Headers.TryGetValue("Connect-Protocol-Version", out var version) || version != "1")
         {
             response.StatusCode = 400;
             response.ContentType = "application/json";
             var error = new ConnectException(ConnectCode.InvalidArgument, "missing or invalid Connect-Protocol-Version header");
-            await response.WriteAsync(error.ToJson());
-            return;
-        }
-
-        // Validate Content-Type
-        var contentType = request.ContentType;
-        if (contentType == null || !contentType.StartsWith($"application/{codec.Name}", StringComparison.OrdinalIgnoreCase))
-        {
-            response.StatusCode = 415;
-            response.ContentType = "application/json";
-            var error = new ConnectException(ConnectCode.InvalidArgument, $"unsupported content type: {contentType}");
             await response.WriteAsync(error.ToJson());
             return;
         }
@@ -58,7 +58,7 @@ internal static class ConnectUnaryHandler
         }
 
         // Create context with request headers
-        var requestHeaders = new Dictionary<string, string>();
+        var requestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var header in request.Headers)
         {
             requestHeaders[header.Key] = header.Value.ToString();
@@ -76,20 +76,27 @@ internal static class ConnectUnaryHandler
             if (request.Headers.TryGetValue("Content-Encoding", out var requestEncoding))
             {
                 var encodingName = requestEncoding.FirstOrDefault();
-                if (!string.IsNullOrEmpty(encodingName))
+                if (!string.IsNullOrEmpty(encodingName) && encodingName != "identity")
                 {
                     var decompressor = compressorRegistry?.Get(encodingName!);
-                    if (decompressor != null)
+                    if (decompressor == null)
                     {
-                        requestBytes = decompressor.Decompress(requestBytes);
+                        throw new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {encodingName}");
                     }
+                    requestBytes = decompressor.Decompress(requestBytes);
                 }
+            }
+
+            // Enforce message size limit
+            var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
+            if (serverOptions != null && serverOptions.MessageReceiveLimit > 0 && requestBytes.Length > serverOptions.MessageReceiveLimit)
+            {
+                throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {requestBytes.Length} exceeds limit {serverOptions.MessageReceiveLimit}");
             }
 
             var requestMessage = codec.Deserialize(requestBytes, method.RequestParser);
 
             // Invoke service method (with interceptor chain if configured)
-            var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
             IMessage responseMessage;
 
             if (serverOptions != null && serverOptions.Interceptors.Count > 0)
@@ -234,7 +241,7 @@ internal static class ConnectUnaryHandler
         }
 
         // Create context with request headers
-        var getRequestHeaders = new Dictionary<string, string>();
+        var getRequestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var header in request.Headers)
         {
             getRequestHeaders[header.Key] = header.Value.ToString();
@@ -265,10 +272,16 @@ internal static class ConnectUnaryHandler
                 }
             }
 
+            // Enforce message size limit
+            var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
+            if (serverOptions != null && serverOptions.MessageReceiveLimit > 0 && requestBytes.Length > serverOptions.MessageReceiveLimit)
+            {
+                throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {requestBytes.Length} exceeds limit {serverOptions.MessageReceiveLimit}");
+            }
+
             var requestMessage = codec.Deserialize(requestBytes, method.RequestParser);
 
             // Invoke service method (with interceptor chain if configured)
-            var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
             IMessage responseMessage;
 
             if (serverOptions != null && serverOptions.Interceptors.Count > 0)

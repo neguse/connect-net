@@ -178,7 +178,11 @@ internal class ConformanceServiceImpl : ConformanceServiceBase
                 {
                     if (def?.Error != null)
                     {
-                        throw BuildError(def.Error);
+                        // Include RequestInfo only if no responses were sent yet
+                        var errorPayload = responseIndex == 0
+                            ? new ConformancePayload { RequestInfo = BuildRequestInfo(context, allRequests.ToArray()) }
+                            : null;
+                        throw BuildError(def.Error, errorPayload);
                     }
                     continue;
                 }
@@ -193,6 +197,7 @@ internal class ConformanceServiceImpl : ConformanceServiceBase
                 if (responseIndex == 0)
                 {
                     payload.RequestInfo = BuildRequestInfo(context, allRequests.ToArray());
+
                 }
                 else
                 {
@@ -222,6 +227,7 @@ internal class ConformanceServiceImpl : ConformanceServiceBase
                     if (i == 0)
                     {
                         payload.RequestInfo = BuildRequestInfo(context, allRequests.ToArray());
+    
                     }
                     yield return new BidiStreamResponse { Payload = payload };
                 }
@@ -230,7 +236,12 @@ internal class ConformanceServiceImpl : ConformanceServiceBase
 
         if (def?.Error != null)
         {
-            throw BuildError(def.Error);
+            // Include RequestInfo only if no responses were sent yet
+            bool responsesWereSent = fullDuplex ? responseIndex > 0 : (def.ResponseData.Count > 0);
+            var errorPayload = responsesWereSent
+                ? null
+                : new ConformancePayload { RequestInfo = BuildRequestInfo(context, allRequests.ToArray()) };
+            throw BuildError(def.Error, errorPayload);
         }
     }
 
@@ -277,6 +288,14 @@ internal class ConformanceServiceImpl : ConformanceServiceBase
             info.RequestHeaders.Add(header);
         }
         info.Requests.AddRange(requestMessages);
+
+        // Echo back Connect-Timeout-Ms if present
+        if (context.RequestHeaders.TryGetValue("Connect-Timeout-Ms", out var timeoutStr) &&
+            long.TryParse(timeoutStr, out var timeoutMs))
+        {
+            info.TimeoutMs = timeoutMs;
+        }
+
         return info;
     }
 

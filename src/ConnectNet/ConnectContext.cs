@@ -14,9 +14,9 @@ public class ConnectContext
         IDictionary<string, string>? requestHeaders = null,
         CancellationToken cancellationToken = default)
     {
-        RequestHeaders = requestHeaders ?? new Dictionary<string, string>();
-        ResponseHeaders = new Dictionary<string, string>();
-        ResponseTrailers = new Dictionary<string, string>();
+        RequestHeaders = requestHeaders ?? new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
+        ResponseHeaders = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
+        ResponseTrailers = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
         CancellationToken = cancellationToken;
     }
 }
