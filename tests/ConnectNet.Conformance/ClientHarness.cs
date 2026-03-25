@@ -158,8 +158,8 @@ internal static class ClientHarness
                 StreamType.Unary => await ExecuteUnaryAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts),
                 StreamType.ServerStream => await ExecuteServerStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts),
                 StreamType.ClientStream => await ExecuteClientStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts),
-                StreamType.HalfDuplexBidiStream => await ExecuteBidiStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts),
-                StreamType.FullDuplexBidiStream => await ExecuteBidiStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts),
+                StreamType.HalfDuplexBidiStream => await ExecuteBidiStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts, fullDuplex: false),
+                StreamType.FullDuplexBidiStream => await ExecuteBidiStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts, fullDuplex: true),
                 _ => throw new NotSupportedException($"Unsupported stream type: {request.StreamType}"),
             };
 
@@ -554,7 +554,8 @@ internal static class ClientHarness
         CallOptions callOptions,
         ClientCompatRequest.Types.Cancel? cancelSpec,
         CancellationTokenSource cts,
-        CancellationTokenSource? timeoutCts)
+        CancellationTokenSource? timeoutCts,
+        bool fullDuplex)
     {
         var result = new ClientResponseResult();
         var payloads = new List<ConformancePayload>();
@@ -571,61 +572,98 @@ internal static class ClientHarness
                 procedure, callOptions, effectiveToken);
 
             var cancelBeforeClose = cancelSpec?.CancelTimingCase == ClientCompatRequest.Types.Cancel.CancelTimingOneofCase.BeforeCloseSend;
-
-            // For half-duplex bidi (and our implementation which buffers all sends before receiving),
-            // send all messages first, then receive all responses
-            for (int i = 0; i < request.RequestMessages.Count; i++)
-            {
-                if (request.RequestDelayMs > 0)
-                {
-                    await Task.Delay(TimeSpan.FromMilliseconds(request.RequestDelayMs), effectiveToken).ConfigureAwait(false);
-                }
-
-                try
-                {
-                    var msg = request.RequestMessages[i].Unpack<BidiStreamRequest>();
-                    await call.SendAsync(msg).ConfigureAwait(false);
-                }
-                catch
-                {
-                    numUnsent = request.RequestMessages.Count - i;
-                    throw;
-                }
-            }
-
-            if (cancelBeforeClose)
-            {
-                cts.Cancel();
-                throw new OperationCanceledException();
-            }
-
-            // Schedule cancellation after close send
-            if (cancelSpec != null)
-            {
-                if (cancelSpec.CancelTimingCase == ClientCompatRequest.Types.Cancel.CancelTimingOneofCase.AfterCloseSendMs)
-                {
-                    cts.CancelAfter(TimeSpan.FromMilliseconds(cancelSpec.AfterCloseSendMs));
-                }
-                else if (cancelSpec.CancelTimingCase == ClientCompatRequest.Types.Cancel.CancelTimingOneofCase.None)
-                {
-                    // Cancel immediately after close send
-                    cts.Cancel();
-                    throw new OperationCanceledException();
-                }
-            }
-
             var afterNumResponses = cancelSpec?.CancelTimingCase == ClientCompatRequest.Types.Cancel.CancelTimingOneofCase.AfterNumResponses
                 ? (int?)cancelSpec.AfterNumResponses
                 : null;
 
-            await foreach (var response in call.CompleteAndReadAsync(effectiveToken).ConfigureAwait(false))
+            if (fullDuplex && cancelBeforeClose)
             {
-                payloads.Add(response.Payload ?? new ConformancePayload());
+                // Full-duplex cancel: Due to HttpClient limitation (SendAsync blocks until
+                // request body is complete), we send all messages, close send, then read.
+                for (int i = 0; i < request.RequestMessages.Count; i++)
+                {
+                    if (request.RequestDelayMs > 0)
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(request.RequestDelayMs), effectiveToken).ConfigureAwait(false);
+                    }
 
-                if (afterNumResponses.HasValue && payloads.Count >= afterNumResponses.Value)
+                    try
+                    {
+                        var msg = request.RequestMessages[i].Unpack<BidiStreamRequest>();
+                        await call.SendAsync(msg).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        numUnsent = request.RequestMessages.Count - i;
+                        throw;
+                    }
+                }
+
+                // Close send so the server can process and respond
+                call.CloseSend();
+
+                // Close send so the server can process and respond
+                call.CloseSend();
+
+                // Read all responses, then cancel
+                await foreach (var response in call.ReadResponsesAsync(effectiveToken).ConfigureAwait(false))
+                {
+                    payloads.Add(response.Payload ?? new ConformancePayload());
+                }
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            }
+            else
+            {
+                // Half-duplex: send all messages first, then receive all responses
+                for (int i = 0; i < request.RequestMessages.Count; i++)
+                {
+                    if (request.RequestDelayMs > 0)
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(request.RequestDelayMs), effectiveToken).ConfigureAwait(false);
+                    }
+
+                    try
+                    {
+                        var msg = request.RequestMessages[i].Unpack<BidiStreamRequest>();
+                        await call.SendAsync(msg).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        numUnsent = request.RequestMessages.Count - i;
+                        throw;
+                    }
+                }
+
+                if (cancelBeforeClose)
                 {
                     cts.Cancel();
-                    throw new OperationCanceledException(cts.Token);
+                    throw new OperationCanceledException();
+                }
+
+                // Schedule cancellation after close send
+                if (cancelSpec != null)
+                {
+                    if (cancelSpec.CancelTimingCase == ClientCompatRequest.Types.Cancel.CancelTimingOneofCase.AfterCloseSendMs)
+                    {
+                        cts.CancelAfter(TimeSpan.FromMilliseconds(cancelSpec.AfterCloseSendMs));
+                    }
+                    else if (cancelSpec.CancelTimingCase == ClientCompatRequest.Types.Cancel.CancelTimingOneofCase.None)
+                    {
+                        cts.Cancel();
+                        throw new OperationCanceledException();
+                    }
+                }
+
+                await foreach (var response in call.CompleteAndReadAsync(effectiveToken).ConfigureAwait(false))
+                {
+                    payloads.Add(response.Payload ?? new ConformancePayload());
+
+                    if (afterNumResponses.HasValue && payloads.Count >= afterNumResponses.Value)
+                    {
+                        cts.Cancel();
+                        throw new OperationCanceledException(cts.Token);
+                    }
                 }
             }
         }

@@ -21,9 +21,13 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
     private readonly Uri _uri;
     private readonly CallOptions? _options;
     private readonly CancellationToken _ct;
-    private readonly MemoryStream _buffer = new();
     private readonly ICodec _codec;
     private readonly ConnectChannelOptions _channelOptions;
+
+    private StreamingContent? _streamingContent;
+    private Stream? _requestStream;
+    private Task<HttpResponseMessage>? _responseTask;
+    private HttpRequestMessage? _httpRequest;
 
     internal BidiStreamCall(
         HttpClient httpClient,
@@ -44,6 +48,8 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
 
     public async Task SendAsync(TReq message)
     {
+        await EnsureRequestStartedAsync().ConfigureAwait(false);
+
         var data = _codec.Serialize(message);
         byte flags = 0x00;
         if (_channelOptions.RequestCompressor != null)
@@ -51,10 +57,55 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
             data = _channelOptions.RequestCompressor.Compress(data);
             flags = Envelope.FlagCompressed;
         }
-        await Envelope.WriteAsync(_buffer, flags, data, _ct).ConfigureAwait(false);
+        await Envelope.WriteAsync(_requestStream!, flags, data, _ct).ConfigureAwait(false);
+        await _requestStream!.FlushAsync(_ct).ConfigureAwait(false);
     }
 
-    public async IAsyncEnumerable<TRes> CompleteAndReadAsync(
+    private async Task EnsureRequestStartedAsync()
+    {
+        if (_responseTask != null) return;
+
+        _streamingContent = new StreamingContent();
+        _streamingContent.Headers.ContentType = new MediaTypeHeaderValue($"application/connect+{_codec.Name}");
+
+        _httpRequest = new HttpRequestMessage(HttpMethod.Post, _uri);
+        _httpRequest.Content = _streamingContent;
+        _httpRequest.Headers.Add("Connect-Protocol-Version", "1");
+
+        if (_channelOptions.RequestCompressor != null)
+        {
+            _httpRequest.Headers.Add("Connect-Content-Encoding", _channelOptions.RequestCompressor.Name);
+        }
+        if (_channelOptions.AcceptCompression && _channelOptions.Decompressors.Count > 0)
+        {
+            _httpRequest.Headers.Add("Connect-Accept-Encoding", string.Join(", ", _channelOptions.Decompressors.Select(d => d.Name)));
+        }
+
+        if (_options?.Timeout is TimeSpan timeout)
+        {
+            _httpRequest.Headers.Add("Connect-Timeout-Ms", ((long)timeout.TotalMilliseconds).ToString());
+        }
+
+        if (_options?.Headers != null)
+        {
+            foreach (var header in _options.Headers)
+            {
+                _httpRequest.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+        }
+
+        _responseTask = _httpClient.SendAsync(_httpRequest, HttpCompletionOption.ResponseHeadersRead, _ct);
+        _requestStream = await _streamingContent.GetStreamAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>Close the send side without reading responses.</summary>
+    public void CloseSend()
+    {
+        _streamingContent?.Complete();
+    }
+
+    /// <summary>Read responses from the server. Does NOT close the send side.</summary>
+    public async IAsyncEnumerable<TRes> ReadResponsesAsync(
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var linkedCt = _ct;
@@ -63,37 +114,11 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
             linkedCt = CancellationTokenSource.CreateLinkedTokenSource(_ct, ct).Token;
         }
 
-        _buffer.Position = 0;
-        var bodyBytes = _buffer.ToArray();
+        // If no messages were sent, start the request now
+        await EnsureRequestStartedAsync().ConfigureAwait(false);
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _uri);
-        httpRequest.Content = new ByteArrayContent(bodyBytes);
-        httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue($"application/connect+{_codec.Name}");
-        httpRequest.Headers.Add("Connect-Protocol-Version", "1");
-
-        if (_channelOptions.RequestCompressor != null)
-        {
-            httpRequest.Headers.Add("Connect-Content-Encoding", _channelOptions.RequestCompressor.Name);
-        }
-        if (_channelOptions.AcceptCompression && _channelOptions.Decompressors.Count > 0)
-        {
-            httpRequest.Headers.Add("Connect-Accept-Encoding", string.Join(", ", _channelOptions.Decompressors.Select(d => d.Name)));
-        }
-
-        if (_options?.Timeout is TimeSpan timeout)
-        {
-            httpRequest.Headers.Add("Connect-Timeout-Ms", ((long)timeout.TotalMilliseconds).ToString());
-        }
-
-        if (_options?.Headers != null)
-        {
-            foreach (var header in _options.Headers)
-            {
-                httpRequest.Headers.TryAddWithoutValidation(header.Key, header.Value);
-            }
-        }
-
-        var httpResponse = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, linkedCt).ConfigureAwait(false);
+        // Wait for response
+        var httpResponse = await _responseTask!.ConfigureAwait(false);
 
         // Extract response headers early so they are available even on error
         if (_options != null)
@@ -192,8 +217,25 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
         }
     }
 
+    /// <summary>Wait for the HTTP response to be available (blocks until server sends headers).</summary>
+    public async Task WaitForResponseAsync()
+    {
+        await EnsureRequestStartedAsync().ConfigureAwait(false);
+        await _responseTask!.ConfigureAwait(false);
+    }
+
+    /// <summary>Close send side and read all responses. Convenience for CloseSend + ReadResponsesAsync.</summary>
+    public async IAsyncEnumerable<TRes> CompleteAndReadAsync(
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        CloseSend();
+        await foreach (var msg in ReadResponsesAsync(ct).ConfigureAwait(false))
+            yield return msg;
+    }
+
     public void Dispose()
     {
-        _buffer.Dispose();
+        _streamingContent?.Complete(); // ensure we don't leave the request hanging
+        _httpRequest?.Dispose();
     }
 }

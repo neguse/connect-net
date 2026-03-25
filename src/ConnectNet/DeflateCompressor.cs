@@ -23,6 +23,19 @@ public class DeflateCompressor : ICompressor
         using (var deflate = new DeflateStream(output, CompressionLevel.Fastest, leaveOpen: true))
         {
             deflate.Write(data, 0, data.Length);
+            deflate.Flush();
+        }
+
+        // .NET's DeflateStream may produce 0 bytes for empty input.
+        // A valid DEFLATE stream requires at least a final block, so add one if needed.
+        if (data.Length == 0 && output.Length == 2)
+        {
+            // Write a final empty stored block: BFINAL=1, BTYPE=00 (stored), LEN=0, NLEN=0xFFFF
+            output.WriteByte(0x01); // BFINAL=1, BTYPE=00
+            output.WriteByte(0x00); // LEN low
+            output.WriteByte(0x00); // LEN high
+            output.WriteByte(0xFF); // NLEN low
+            output.WriteByte(0xFF); // NLEN high
         }
 
         // Adler32 checksum (big-endian)
