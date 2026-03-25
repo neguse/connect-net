@@ -39,18 +39,17 @@ CodeFromHttpStatusのマッピングが仕様と不一致。
 エラーボディ不在時のHTTPステータスフォールバックが不正確。
 
 ### 修正
-Connect仕様の正確なマッピング:
-- 400 → InvalidArgument
+Connect仕様の正確なマッピング（conformanceテスト準拠）:
+- 400 → Internal
 - 401 → Unauthenticated
 - 403 → PermissionDenied
 - 404 → Unimplemented
 - 408 → DeadlineExceeded
-- 409 → Aborted（※仕様確認要）
 - 429 → Unavailable
 - 502 → Unavailable
 - 503 → Unavailable
 - 504 → Unavailable
-- 上記以外 → Unknown
+- 上記以外（409, 412, 413, 415, 431含む）→ Unknown
 
 ParseErrorResponseのフォールバックロジック:
 1. レスポンスボディをConnect error JSONとしてパース試行

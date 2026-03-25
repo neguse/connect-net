@@ -9,7 +9,7 @@ Build type-safe RPC clients and servers that work over HTTP/1.1 and HTTP/2.
 - **Unity compatible** -- Client library targets .NET Standard 2.1
 - **Full RPC support** -- Unary, Server Streaming, Client Streaming, Bidirectional Streaming
 - **Multiple codecs** -- Protobuf and JSON
-- **gzip compression** -- Automatic request/response compression with negotiation
+- **gzip/deflate compression** -- Automatic request/response compression with negotiation
 - **Interceptors** -- Client-side and server-side middleware for unary RPCs
 - **GET requests** -- Cache-friendly idempotent RPCs via query parameters
 - **Health checks** -- gRPC-compatible health endpoint (`grpc.health.v1.Health/Check`)
@@ -86,13 +86,27 @@ Console.WriteLine(response.Message); // Hello World!
 ### Client (Unity)
 
 ```csharp
-// Works with any HttpMessageHandler -- plug in YetAnotherHttpHandler for HTTP/2
-var handler = new YetAnotherHttpHandler();
-var channel = new ConnectChannel(new HttpClient(handler), "https://api.example.com");
+// HTTP/1.1 (default): works with Unity's built-in HTTP stack
+// Supports: Unary, Server Streaming
+var channel = new ConnectChannel(new HttpClient(), "https://api.example.com");
 var client = new GreeterServiceClient(channel);
-
 var response = await client.SayHelloAsync(new HelloRequest { Name = "Unity" });
 ```
+
+#### HTTP/2 with YetAnotherHttpHandler
+
+For Client Streaming and Bidirectional Streaming, HTTP/2 is required. Use [YetAnotherHttpHandler](https://github.com/Cysharp/YetAnotherHttpHandler) (YAHA) as the HTTP transport:
+
+```csharp
+// HTTP/2: enables all RPC types including Client/Bidi Streaming
+using Cysharp.Net.Http;
+
+var handler = new YetAnotherHttpHandler { Http2Only = true };
+var channel = new ConnectChannel(new HttpClient(handler), "https://api.example.com");
+var client = new GreeterServiceClient(channel);
+```
+
+YAHA requires building its native Rust library for your target platform. See the [YAHA documentation](https://github.com/Cysharp/YetAnotherHttpHandler) for build instructions.
 
 ## Streaming
 
@@ -164,7 +178,7 @@ public override async IAsyncEnumerable<HelloResponse> Chat(
     }
 }
 
-// Client
+// Client (half-duplex: send all, then read all)
 using var call = client.ChatAsync();
 await call.SendAsync(new HelloRequest { Name = "Alice" });
 await call.SendAsync(new HelloRequest { Name = "Bob" });
@@ -172,6 +186,21 @@ await foreach (var response in call.CompleteAndReadAsync())
 {
     Console.WriteLine(response.Message);
 }
+
+// Client (full-duplex with HTTP/2: read while sending)
+using var call = client.ChatAsync();
+await call.SendAsync(new HelloRequest { Name = "Alice" });
+
+// Read responses concurrently
+var readTask = Task.Run(async () =>
+{
+    await foreach (var response in call.ReadResponsesAsync())
+        Console.WriteLine(response.Message);
+});
+
+await call.SendAsync(new HelloRequest { Name = "Bob" });
+call.CloseSend();
+await readTask;
 ```
 
 ## Configuration
@@ -394,9 +423,19 @@ if (!result.IsValid)
 | Package | Target | Description |
 |---------|--------|-------------|
 | **ConnectNet** | .NET Standard 2.1 | Core library: codecs (`ICodec`, `ProtobufCodec`, `JsonCodec`), errors (`ConnectException`, `ConnectCode`), envelope framing, compression (`GzipCompressor`) |
-| **ConnectNet.Client** | .NET Standard 2.1 | Client library: `ConnectChannel`, `CallOptions`, `ClientStreamCall`, `BidiStreamCall` |
+| **ConnectNet.Client** | .NET Standard 2.1 | Client library: `ConnectChannel`, `CallOptions`, `ClientStreamCall`, `BidiStreamCall`, `StreamingContent` |
+| **ConnectNet.Validation** | .NET Standard 2.1 | protovalidate: `ProtoValidator`, `ValidateInterceptor` |
 | **ConnectNet.Server** | .NET 10 | Server library: ASP.NET Core integration, unary/streaming handlers, health checks, reflection |
 | **protoc-gen-connect-csharp** | Go | Code generation plugin for `protoc` |
+
+## Conformance
+
+connect-net passes **100%** of the [connectrpc/conformance](https://github.com/connectrpc/conformance) test suite (v1.0.5):
+
+| Mode | Tests |
+|------|-------|
+| Client | 2422/2422 |
+| Server | 2244/2244 |
 
 ## Building
 
@@ -406,6 +445,12 @@ dotnet build
 
 # Run tests
 dotnet test
+
+# Run conformance tests (requires connectconformance binary)
+connectconformance --mode client --conf tests/ConnectNet.Conformance/config.yaml \
+  -- dotnet run --project tests/ConnectNet.Conformance -- --mode client
+connectconformance --mode server --conf tests/ConnectNet.Conformance/config.yaml \
+  -- dotnet run --project tests/ConnectNet.Conformance -- --mode server
 
 # Build the protoc plugin
 cd tools/protoc-gen-connect-csharp
