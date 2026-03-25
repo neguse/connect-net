@@ -110,7 +110,16 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
                 var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
                     string.Equals(d.Name, errorContentEncoding, StringComparison.OrdinalIgnoreCase));
                 if (decompressor != null)
-                    errorBytes = decompressor.Decompress(errorBytes);
+                {
+                    try
+                    {
+                        errorBytes = decompressor.Decompress(errorBytes);
+                    }
+                    catch
+                    {
+                        // Body may not actually be compressed; fall back to raw bytes
+                    }
+                }
             }
             var errorBody = Encoding.UTF8.GetString(errorBytes);
             throw ConnectChannel.ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
@@ -119,6 +128,15 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
         // Check if server is sending compressed envelopes
         httpResponse.Headers.TryGetValues("Connect-Content-Encoding", out var connectContentEncodings);
         var serverCompression = connectContentEncodings?.FirstOrDefault();
+
+        // Validate that the compression encoding is known
+        if (serverCompression != null && !string.Equals(serverCompression, "identity", StringComparison.OrdinalIgnoreCase))
+        {
+            var knownCompression = _channelOptions.Decompressors.Any(d =>
+                string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
+            if (!knownCompression)
+                throw new ConnectException(ConnectCode.Internal, $"unknown compression: {serverCompression}");
+        }
 
         using var responseStream = await httpResponse.Content.ReadAsStreamAsync().ConfigureAwait(false);
 
@@ -133,12 +151,16 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
             var (flags, data) = envelope.Value;
 
             // Decompress if flag indicates compression
-            if ((flags & Envelope.FlagCompressed) != 0 && serverCompression != null)
+            if ((flags & Envelope.FlagCompressed) != 0)
             {
+                if (serverCompression == null)
+                    throw new ConnectException(ConnectCode.Internal, "received compressed message but no compression was negotiated");
                 var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
                     string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
                 if (decompressor != null)
                     data = decompressor.Decompress(data);
+                else
+                    throw new ConnectException(ConnectCode.Internal, $"unknown compression: {serverCompression}");
             }
 
             if ((flags & Envelope.FlagEndStream) != 0)

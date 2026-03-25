@@ -153,10 +153,27 @@ public class ConnectChannel
                 var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
                     string.Equals(d.Name, errorContentEncoding, StringComparison.OrdinalIgnoreCase));
                 if (decompressor != null)
-                    errorBytes = decompressor.Decompress(errorBytes);
+                {
+                    try
+                    {
+                        errorBytes = decompressor.Decompress(errorBytes);
+                    }
+                    catch
+                    {
+                        // Body may not actually be compressed; fall back to raw bytes
+                    }
+                }
             }
             var errorBody = Encoding.UTF8.GetString(errorBytes);
             throw ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
+        }
+
+        // Validate Content-Type
+        var contentType = httpResponse.Content.Headers.ContentType?.MediaType;
+        if (contentType != null && !contentType.StartsWith($"application/{_codec.Name}", StringComparison.OrdinalIgnoreCase)
+            && !contentType.StartsWith($"application/connect+{_codec.Name}", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConnectException(ConnectCode.Internal, $"unexpected content-type: {contentType}");
         }
 
         var responseBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
@@ -169,6 +186,8 @@ public class ConnectChannel
                 string.Equals(d.Name, responseContentEncoding, StringComparison.OrdinalIgnoreCase));
             if (decompressor != null)
                 responseBytes = decompressor.Decompress(responseBytes);
+            else if (!string.Equals(responseContentEncoding, "identity", StringComparison.OrdinalIgnoreCase))
+                throw new ConnectException(ConnectCode.Internal, $"unknown content-encoding: {responseContentEncoding}");
         }
 
         if (responseBytes.Length == 0)
@@ -239,10 +258,27 @@ public class ConnectChannel
                 var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
                     string.Equals(d.Name, errorContentEncoding, StringComparison.OrdinalIgnoreCase));
                 if (decompressor != null)
-                    errorBytes = decompressor.Decompress(errorBytes);
+                {
+                    try
+                    {
+                        errorBytes = decompressor.Decompress(errorBytes);
+                    }
+                    catch
+                    {
+                        // Body may not actually be compressed; fall back to raw bytes
+                    }
+                }
             }
             var errorBody = Encoding.UTF8.GetString(errorBytes);
             throw ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
+        }
+
+        // Validate Content-Type
+        var contentType = httpResponse.Content.Headers.ContentType?.MediaType;
+        if (contentType != null && !contentType.StartsWith($"application/{_codec.Name}", StringComparison.OrdinalIgnoreCase)
+            && !contentType.StartsWith($"application/connect+{_codec.Name}", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConnectException(ConnectCode.Internal, $"unexpected content-type: {contentType}");
         }
 
         var responseBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
@@ -255,6 +291,8 @@ public class ConnectChannel
                 string.Equals(d.Name, responseContentEncoding, StringComparison.OrdinalIgnoreCase));
             if (decompressor != null)
                 responseBytes = decompressor.Decompress(responseBytes);
+            else if (!string.Equals(responseContentEncoding, "identity", StringComparison.OrdinalIgnoreCase))
+                throw new ConnectException(ConnectCode.Internal, $"unknown content-encoding: {responseContentEncoding}");
         }
 
         if (responseBytes.Length == 0)
@@ -358,7 +396,16 @@ public class ConnectChannel
                 var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
                     string.Equals(d.Name, errorContentEncoding, StringComparison.OrdinalIgnoreCase));
                 if (decompressor != null)
-                    errorBytes = decompressor.Decompress(errorBytes);
+                {
+                    try
+                    {
+                        errorBytes = decompressor.Decompress(errorBytes);
+                    }
+                    catch
+                    {
+                        // Body may not actually be compressed; fall back to raw bytes
+                    }
+                }
             }
             var errorBody = Encoding.UTF8.GetString(errorBytes);
             throw ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
@@ -369,6 +416,15 @@ public class ConnectChannel
         // Check if server is sending compressed envelopes
         httpResponse.Headers.TryGetValues("Connect-Content-Encoding", out var connectContentEncodings);
         var serverCompression = connectContentEncodings?.FirstOrDefault();
+
+        // Validate that the compression encoding is known
+        if (serverCompression != null && !string.Equals(serverCompression, "identity", StringComparison.OrdinalIgnoreCase))
+        {
+            var knownCompression = _channelOptions.Decompressors.Any(d =>
+                string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
+            if (!knownCompression)
+                throw new ConnectException(ConnectCode.Internal, $"unknown compression: {serverCompression}");
+        }
 
         using var responseStream = await httpResponse.Content.ReadAsStreamAsync().ConfigureAwait(false);
 
@@ -384,12 +440,16 @@ public class ConnectChannel
             var (flags, data) = envelope.Value;
 
             // Decompress if flag indicates compression
-            if ((flags & Envelope.FlagCompressed) != 0 && serverCompression != null)
+            if ((flags & Envelope.FlagCompressed) != 0)
             {
+                if (serverCompression == null)
+                    throw new ConnectException(ConnectCode.Internal, "received compressed message but no compression was negotiated");
                 var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
                     string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
                 if (decompressor != null)
                     data = decompressor.Decompress(data);
+                else
+                    throw new ConnectException(ConnectCode.Internal, $"unknown compression: {serverCompression}");
             }
 
             if ((flags & Envelope.FlagEndStream) != 0)
