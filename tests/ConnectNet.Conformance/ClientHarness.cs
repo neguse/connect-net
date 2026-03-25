@@ -11,6 +11,7 @@ using Connectrpc.Conformance.V1;
 using ConnectNet;
 using ConnectNet.Client;
 using Google.Protobuf;
+using Google.Protobuf.Reflection;
 using Google.Protobuf.WellKnownTypes;
 
 namespace ConnectNet.Conformance;
@@ -74,7 +75,18 @@ internal static class ClientHarness
         }
 
         // Build codec
-        ICodec codec = request.Codec == Codec.Json ? new JsonCodec() : new ProtobufCodec();
+        ICodec codec;
+        if (request.Codec == Codec.Json)
+        {
+            var typeRegistry = TypeRegistry.FromFiles(
+                ServiceReflection.Descriptor,
+                ConfigReflection.Descriptor);
+            codec = new JsonCodec(typeRegistry);
+        }
+        else
+        {
+            codec = new ProtobufCodec();
+        }
 
         // Build channel options
         var channelOptions = new ConnectChannelOptions();
@@ -172,27 +184,32 @@ internal static class ClientHarness
 
     private static HttpClient CreateHttpClient(ClientCompatRequest request)
     {
+        var httpVersion = request.HttpVersion == Connectrpc.Conformance.V1.HTTPVersion._2
+            ? System.Net.HttpVersion.Version20
+            : System.Net.HttpVersion.Version11;
+
         if (!request.ServerTlsCert.IsEmpty)
         {
             var serverCertBytes = request.ServerTlsCert.ToByteArray();
-            var handler = new HttpClientHandler();
+            var handler = new SocketsHttpHandler();
 
-            handler.ServerCertificateCustomValidationCallback = (message, cert, chain, errors) =>
+            handler.SslOptions.RemoteCertificateValidationCallback = (message, cert, chain, errors) =>
             {
                 if (errors == SslPolicyErrors.None)
                     return true;
 
                 // Trust the specific server certificate
                 var trustedCert = X509CertificateLoader.LoadCertificate(serverCertBytes);
-                if (cert != null && cert.Thumbprint == trustedCert.Thumbprint)
+                var cert2 = cert != null ? new X509Certificate2(cert) : null;
+                if (cert2 != null && cert2.Thumbprint == trustedCert.Thumbprint)
                     return true;
 
                 // Try chain validation with the trusted cert
-                if (chain != null && cert != null)
+                if (chain != null && cert2 != null)
                 {
                     chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
                     chain.ChainPolicy.CustomTrustStore.Add(trustedCert);
-                    return chain.Build(new X509Certificate2(cert));
+                    return chain.Build(cert2);
                 }
 
                 return false;
@@ -204,13 +221,22 @@ internal static class ClientHarness
                     Encoding.UTF8.GetString(request.ClientTlsCreds.Cert.Span),
                     Encoding.UTF8.GetString(request.ClientTlsCreds.Key.Span));
                 clientCert = X509CertificateLoader.LoadPkcs12(clientCert.Export(X509ContentType.Pkcs12), null);
-                handler.ClientCertificates.Add(clientCert);
+                handler.SslOptions.ClientCertificates = new X509CertificateCollection { clientCert };
             }
 
-            return new HttpClient(handler);
+            return new HttpClient(handler)
+            {
+                DefaultRequestVersion = httpVersion,
+                DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+            };
         }
 
-        return new HttpClient();
+        var defaultHandler = new SocketsHttpHandler();
+        return new HttpClient(defaultHandler)
+        {
+            DefaultRequestVersion = httpVersion,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
     }
 
     private static async Task<ClientResponseResult> ExecuteUnaryAsync(
@@ -320,7 +346,7 @@ internal static class ClientHarness
                 if (afterNumResponses.HasValue && payloads.Count >= afterNumResponses.Value)
                 {
                     cts.Cancel();
-                    break;
+                    throw new OperationCanceledException(cts.Token);
                 }
             }
         }
@@ -499,7 +525,7 @@ internal static class ClientHarness
                 if (afterNumResponses.HasValue && payloads.Count >= afterNumResponses.Value)
                 {
                     cts.Cancel();
-                    break;
+                    throw new OperationCanceledException(cts.Token);
                 }
             }
         }
