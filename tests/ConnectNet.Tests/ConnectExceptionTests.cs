@@ -60,7 +60,7 @@ public class ConnectExceptionTests
     [InlineData(ConnectCode.Unavailable, 503)]
     [InlineData(ConnectCode.DataLoss, 500)]
     [InlineData(ConnectCode.DeadlineExceeded, 504)]
-    [InlineData(ConnectCode.Canceled, 408)]
+    [InlineData(ConnectCode.Canceled, 499)]
     [InlineData(ConnectCode.Unknown, 500)]
     public void ToHttpStatus_MapsCorrectly(ConnectCode code, int expectedStatus)
     {

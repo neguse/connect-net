@@ -63,7 +63,7 @@ public class ConnectException : Exception
             foreach (var d in detailsProp.EnumerateArray())
             {
                 var type = d.GetProperty("type").GetString() ?? "";
-                var value = Convert.FromBase64String(d.GetProperty("value").GetString() ?? "");
+                var value = Base64DecodeUnpadded(d.GetProperty("value").GetString() ?? "");
                 details.Add(new ConnectErrorDetail(type, value));
             }
         }
@@ -116,6 +116,17 @@ public class ConnectException : Exception
     private static string Base64EncodeUnpadded(byte[] data)
     {
         return Convert.ToBase64String(data).TrimEnd('=');
+    }
+
+    private static byte[] Base64DecodeUnpadded(string input)
+    {
+        // Add padding if needed for standard base64 decoder
+        switch (input.Length % 4)
+        {
+            case 2: input += "=="; break;
+            case 3: input += "="; break;
+        }
+        return Convert.FromBase64String(input);
     }
 
     public static ConnectCode CodeFromString(string s) => s switch
