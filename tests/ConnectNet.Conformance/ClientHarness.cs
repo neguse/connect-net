@@ -142,17 +142,23 @@ internal static class ClientHarness
 
         // Set up cancellation
         using var cts = new CancellationTokenSource();
+        CancellationTokenSource? timeoutCts = null;
+        if (request.HasTimeoutMs)
+        {
+            timeoutCts = new CancellationTokenSource();
+            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(request.TimeoutMs));
+        }
         var cancelSpec = request.Cancel;
 
         try
         {
             var result = request.StreamType switch
             {
-                StreamType.Unary => await ExecuteUnaryAsync(channel, procedure, request, callOptions, cancelSpec, cts),
-                StreamType.ServerStream => await ExecuteServerStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts),
-                StreamType.ClientStream => await ExecuteClientStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts),
-                StreamType.HalfDuplexBidiStream => await ExecuteBidiStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts),
-                StreamType.FullDuplexBidiStream => await ExecuteBidiStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts),
+                StreamType.Unary => await ExecuteUnaryAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts),
+                StreamType.ServerStream => await ExecuteServerStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts),
+                StreamType.ClientStream => await ExecuteClientStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts),
+                StreamType.HalfDuplexBidiStream => await ExecuteBidiStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts),
+                StreamType.FullDuplexBidiStream => await ExecuteBidiStreamAsync(channel, procedure, request, callOptions, cancelSpec, cts, timeoutCts),
                 _ => throw new NotSupportedException($"Unsupported stream type: {request.StreamType}"),
             };
 
@@ -169,6 +175,10 @@ internal static class ClientHarness
                 TestName = request.TestName,
                 Error = new ClientErrorResult { Message = ex.Message },
             };
+        }
+        finally
+        {
+            timeoutCts?.Dispose();
         }
     }
 
@@ -245,7 +255,8 @@ internal static class ClientHarness
         ClientCompatRequest request,
         CallOptions callOptions,
         ClientCompatRequest.Types.Cancel? cancelSpec,
-        CancellationTokenSource cts)
+        CancellationTokenSource cts,
+        CancellationTokenSource? timeoutCts)
     {
         if (request.RequestMessages.Count != 1)
         {
@@ -253,6 +264,11 @@ internal static class ClientHarness
         }
 
         var requestMsg = request.RequestMessages[0];
+
+        using var linkedCts = timeoutCts != null
+            ? CancellationTokenSource.CreateLinkedTokenSource(cts.Token, timeoutCts.Token)
+            : null;
+        var effectiveToken = linkedCts?.Token ?? cts.Token;
 
         // Schedule cancellation if needed
         if (cancelSpec != null && cancelSpec.CancelTimingCase == ClientCompatRequest.Types.Cancel.CancelTimingOneofCase.AfterCloseSendMs)
@@ -270,7 +286,7 @@ internal static class ClientHarness
             {
                 var typedRequest = requestMsg.Unpack<IdempotentUnaryRequest>();
                 var response = await channel.UnaryAsync<IdempotentUnaryRequest, IdempotentUnaryResponse>(
-                    procedure, typedRequest, callOptions, cts.Token).ConfigureAwait(false);
+                    procedure, typedRequest, callOptions, effectiveToken).ConfigureAwait(false);
                 if (response.Payload != null)
                     payloads.Add(response.Payload);
             }
@@ -278,13 +294,13 @@ internal static class ClientHarness
             {
                 var typedRequest = requestMsg.Unpack<UnimplementedRequest>();
                 await channel.UnaryAsync<UnimplementedRequest, UnimplementedResponse>(
-                    procedure, typedRequest, callOptions, cts.Token).ConfigureAwait(false);
+                    procedure, typedRequest, callOptions, effectiveToken).ConfigureAwait(false);
             }
             else
             {
                 var typedRequest = requestMsg.Unpack<UnaryRequest>();
                 var response = await channel.UnaryAsync<UnaryRequest, UnaryResponse>(
-                    procedure, typedRequest, callOptions, cts.Token).ConfigureAwait(false);
+                    procedure, typedRequest, callOptions, effectiveToken).ConfigureAwait(false);
                 if (response.Payload != null)
                     payloads.Add(response.Payload);
             }
@@ -295,11 +311,22 @@ internal static class ClientHarness
         }
         catch (OperationCanceledException)
         {
-            result.Error = new Error
+            if (timeoutCts != null && timeoutCts.IsCancellationRequested)
             {
-                Code = Code.Canceled,
-                Message = "canceled",
-            };
+                result.Error = new Error
+                {
+                    Code = Code.DeadlineExceeded,
+                    Message = "deadline exceeded",
+                };
+            }
+            else
+            {
+                result.Error = new Error
+                {
+                    Code = Code.Canceled,
+                    Message = "canceled",
+                };
+            }
         }
 
         result.Payloads.AddRange(payloads);
@@ -314,7 +341,8 @@ internal static class ClientHarness
         ClientCompatRequest request,
         CallOptions callOptions,
         ClientCompatRequest.Types.Cancel? cancelSpec,
-        CancellationTokenSource cts)
+        CancellationTokenSource cts,
+        CancellationTokenSource? timeoutCts)
     {
         if (request.RequestMessages.Count != 1)
         {
@@ -324,6 +352,11 @@ internal static class ClientHarness
         var requestMsg = request.RequestMessages[0].Unpack<ServerStreamRequest>();
         var result = new ClientResponseResult();
         var payloads = new List<ConformancePayload>();
+
+        using var linkedCts = timeoutCts != null
+            ? CancellationTokenSource.CreateLinkedTokenSource(cts.Token, timeoutCts.Token)
+            : null;
+        var effectiveToken = linkedCts?.Token ?? cts.Token;
 
         // Schedule cancellation after close send
         if (cancelSpec != null && cancelSpec.CancelTimingCase == ClientCompatRequest.Types.Cancel.CancelTimingOneofCase.AfterCloseSendMs)
@@ -338,7 +371,7 @@ internal static class ClientHarness
         try
         {
             await foreach (var response in channel.ServerStreamAsync<ServerStreamRequest, ServerStreamResponse>(
-                procedure, requestMsg, callOptions, cts.Token).ConfigureAwait(false))
+                procedure, requestMsg, callOptions, effectiveToken).ConfigureAwait(false))
             {
                 if (response.Payload != null)
                     payloads.Add(response.Payload);
@@ -356,11 +389,22 @@ internal static class ClientHarness
         }
         catch (OperationCanceledException)
         {
-            result.Error = new Error
+            if (timeoutCts != null && timeoutCts.IsCancellationRequested)
             {
-                Code = Code.Canceled,
-                Message = "canceled",
-            };
+                result.Error = new Error
+                {
+                    Code = Code.DeadlineExceeded,
+                    Message = "deadline exceeded",
+                };
+            }
+            else
+            {
+                result.Error = new Error
+                {
+                    Code = Code.Canceled,
+                    Message = "canceled",
+                };
+            }
         }
 
         result.Payloads.AddRange(payloads);
@@ -375,16 +419,22 @@ internal static class ClientHarness
         ClientCompatRequest request,
         CallOptions callOptions,
         ClientCompatRequest.Types.Cancel? cancelSpec,
-        CancellationTokenSource cts)
+        CancellationTokenSource cts,
+        CancellationTokenSource? timeoutCts)
     {
         var result = new ClientResponseResult();
         var payloads = new List<ConformancePayload>();
         var numUnsent = 0;
 
+        using var linkedCts = timeoutCts != null
+            ? CancellationTokenSource.CreateLinkedTokenSource(cts.Token, timeoutCts.Token)
+            : null;
+        var effectiveToken = linkedCts?.Token ?? cts.Token;
+
         try
         {
             using var call = channel.ClientStreamAsync<ClientStreamRequest, ClientStreamResponse>(
-                procedure, callOptions, cts.Token);
+                procedure, callOptions, effectiveToken);
 
             var cancelBeforeClose = cancelSpec?.CancelTimingCase == ClientCompatRequest.Types.Cancel.CancelTimingOneofCase.BeforeCloseSend;
 
@@ -392,7 +442,7 @@ internal static class ClientHarness
             {
                 if (request.RequestDelayMs > 0)
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(request.RequestDelayMs), cts.Token).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromMilliseconds(request.RequestDelayMs), effectiveToken).ConfigureAwait(false);
                 }
 
                 try
@@ -438,11 +488,22 @@ internal static class ClientHarness
         }
         catch (OperationCanceledException)
         {
-            result.Error = new Error
+            if (timeoutCts != null && timeoutCts.IsCancellationRequested)
             {
-                Code = Code.Canceled,
-                Message = "canceled",
-            };
+                result.Error = new Error
+                {
+                    Code = Code.DeadlineExceeded,
+                    Message = "deadline exceeded",
+                };
+            }
+            else
+            {
+                result.Error = new Error
+                {
+                    Code = Code.Canceled,
+                    Message = "canceled",
+                };
+            }
         }
 
         result.NumUnsentRequests = numUnsent;
@@ -458,16 +519,22 @@ internal static class ClientHarness
         ClientCompatRequest request,
         CallOptions callOptions,
         ClientCompatRequest.Types.Cancel? cancelSpec,
-        CancellationTokenSource cts)
+        CancellationTokenSource cts,
+        CancellationTokenSource? timeoutCts)
     {
         var result = new ClientResponseResult();
         var payloads = new List<ConformancePayload>();
         var numUnsent = 0;
 
+        using var linkedCts = timeoutCts != null
+            ? CancellationTokenSource.CreateLinkedTokenSource(cts.Token, timeoutCts.Token)
+            : null;
+        var effectiveToken = linkedCts?.Token ?? cts.Token;
+
         try
         {
             using var call = channel.BidiStreamAsync<BidiStreamRequest, BidiStreamResponse>(
-                procedure, callOptions, cts.Token);
+                procedure, callOptions, effectiveToken);
 
             var cancelBeforeClose = cancelSpec?.CancelTimingCase == ClientCompatRequest.Types.Cancel.CancelTimingOneofCase.BeforeCloseSend;
 
@@ -477,7 +544,7 @@ internal static class ClientHarness
             {
                 if (request.RequestDelayMs > 0)
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(request.RequestDelayMs), cts.Token).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromMilliseconds(request.RequestDelayMs), effectiveToken).ConfigureAwait(false);
                 }
 
                 try
@@ -517,7 +584,7 @@ internal static class ClientHarness
                 ? (int?)cancelSpec.AfterNumResponses
                 : null;
 
-            await foreach (var response in call.CompleteAndReadAsync(cts.Token).ConfigureAwait(false))
+            await foreach (var response in call.CompleteAndReadAsync(effectiveToken).ConfigureAwait(false))
             {
                 if (response.Payload != null)
                     payloads.Add(response.Payload);
@@ -535,11 +602,22 @@ internal static class ClientHarness
         }
         catch (OperationCanceledException)
         {
-            result.Error = new Error
+            if (timeoutCts != null && timeoutCts.IsCancellationRequested)
             {
-                Code = Code.Canceled,
-                Message = "canceled",
-            };
+                result.Error = new Error
+                {
+                    Code = Code.DeadlineExceeded,
+                    Message = "deadline exceeded",
+                };
+            }
+            else
+            {
+                result.Error = new Error
+                {
+                    Code = Code.Canceled,
+                    Message = "canceled",
+                };
+            }
         }
 
         result.NumUnsentRequests = numUnsent;
