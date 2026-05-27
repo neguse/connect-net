@@ -6,15 +6,15 @@ Build type-safe RPC clients and servers that work over HTTP/1.1 and HTTP/2.
 
 ## Features
 
-- **Unity compatible** -- Client library targets .NET Standard 2.1
-- **Full RPC support** -- Unary, Server Streaming, Client Streaming, Bidirectional Streaming
-- **Multiple codecs** -- Protobuf and JSON
-- **gzip/deflate compression** -- Automatic request/response compression with negotiation
-- **Interceptors** -- Client-side and server-side middleware for unary RPCs
-- **GET requests** -- Cache-friendly idempotent RPCs via query parameters
-- **Health checks** -- gRPC-compatible health endpoint (`grpc.health.v1.Health/Check`)
-- **Service discovery** -- Server reflection via `/connect/v1/services` and gRPC reflection
-- **Code generation** -- `protoc-gen-connect-csharp` plugin generates typed clients and server stubs
+- **Unity compatible** — Client library targets .NET Standard 2.1
+- **Full RPC support** — Unary, Server Streaming, Client Streaming, Bidirectional Streaming
+- **Multiple codecs** — Protobuf and JSON
+- **gzip/deflate compression** — Automatic request/response compression with negotiation
+- **Interceptors** — Client-side and server-side middleware for unary RPCs
+- **GET requests** — Cache-friendly idempotent RPCs via query parameters
+- **Health checks** — gRPC-compatible health endpoint (`grpc.health.v1.Health/Check`)
+- **Service discovery** — Server reflection via `/connect/v1/services` and gRPC reflection
+- **Code generation** — `protoc-gen-connect-csharp` plugin generates typed clients and server stubs
 
 ## Quick Start
 
@@ -43,8 +43,8 @@ protoc --csharp_out=. --connect-csharp_out=. greeter.proto
 ```
 
 This generates two files:
-- `Greeter.cs` -- Protobuf message classes (from `--csharp_out`)
-- `GreeterService.connect.cs` -- Connect RPC client, server base class, and service definition (from `--connect-csharp_out`)
+- `Greeter.cs` — Protobuf message classes (from `--csharp_out`)
+- `GreeterService.connect.cs` — Connect RPC client, server base class, and service definition (from `--connect-csharp_out`)
 
 ### Server
 
@@ -107,6 +107,17 @@ var client = new GreeterServiceClient(channel);
 ```
 
 YAHA requires building its native Rust library for your target platform. See the [YAHA documentation](https://github.com/Cysharp/YetAnotherHttpHandler) for build instructions.
+
+#### Unity WebGL
+
+Unity WebGL builds cannot use `SocketsHttpHandler`. Use the bundled `UnityWebRequestHandler`, which is backed by `UnityWebRequest` and supports Unary and Server Streaming over HTTP/1.1:
+
+```csharp
+var channel = new ConnectChannel(new HttpClient(new UnityWebRequestHandler()), "https://api.example.com");
+var client = new GreeterServiceClient(channel);
+```
+
+Client Streaming and Bidirectional Streaming are not available on WebGL because the browser stack does not expose HTTP/2.
 
 ## Streaming
 
@@ -186,18 +197,20 @@ await foreach (var response in call.CompleteAndReadAsync())
 {
     Console.WriteLine(response.Message);
 }
+```
 
-// Client (full-duplex with HTTP/2: read while sending)
+Full-duplex (HTTP/2 only) reads responses while still sending requests:
+
+```csharp
 using var call = client.ChatAsync();
-await call.SendAsync(new HelloRequest { Name = "Alice" });
 
-// Read responses concurrently
 var readTask = Task.Run(async () =>
 {
     await foreach (var response in call.ReadResponsesAsync())
         Console.WriteLine(response.Message);
 });
 
+await call.SendAsync(new HelloRequest { Name = "Alice" });
 await call.SendAsync(new HelloRequest { Name = "Bob" });
 call.CloseSend();
 await readTask;
@@ -327,8 +340,8 @@ app.MapConnectReflection();
 ```
 
 This exposes:
-- `GET /connect/v1/services` -- JSON list of registered services
-- `POST /grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo` -- gRPC reflection (list_services)
+- `GET /connect/v1/services` — JSON list of registered services
+- `POST /grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo` — gRPC reflection (list_services)
 
 ### Custom Headers and Trailers
 
@@ -430,29 +443,19 @@ if (!result.IsValid)
 
 ## Conformance
 
-connect-net passes **100%** of the [connectrpc/conformance](https://github.com/connectrpc/conformance) test suite (v1.0.5):
+connect-net passes **100%** of the [connectrpc/conformance](https://github.com/connectrpc/conformance) suite (v1.0.5) in both client and server modes.
 
-| Mode | Tests |
-|------|-------|
-| Client | 2422/2422 |
-| Server | 2244/2244 |
+## Installing
 
-## Building
+The library is not yet published to NuGet. Build from source and reference the projects directly:
 
 ```bash
-# Build all projects
 dotnet build
+```
 
-# Run tests
-dotnet test
+The code generator is a Go binary. Build it and put it on `PATH` so `protoc` can find it:
 
-# Run conformance tests (requires connectconformance binary)
-connectconformance --mode client --conf tests/ConnectNet.Conformance/config.yaml \
-  -- dotnet run --project tests/ConnectNet.Conformance -- --mode client
-connectconformance --mode server --conf tests/ConnectNet.Conformance/config.yaml \
-  -- dotnet run --project tests/ConnectNet.Conformance -- --mode server
-
-# Build the protoc plugin
+```bash
 cd tools/protoc-gen-connect-csharp
 go build -o protoc-gen-connect-csharp .
 ```
