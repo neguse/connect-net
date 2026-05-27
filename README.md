@@ -462,4 +462,4 @@ go build -o protoc-gen-connect-csharp .
 
 ## License
 
-See [LICENSE](LICENSE) file.
+Released under the [MIT License](LICENSE).
