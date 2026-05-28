@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Xunit;
+using ConnectNet.Pooling;
 
 namespace ConnectNet.Tests;
 
@@ -29,7 +30,7 @@ public class GetUnaryTests
 
         var server = app.GetTestServer();
         var httpClient = server.CreateClient();
-        var channel = new ConnectChannel(httpClient, server.BaseAddress.ToString());
+        var channel = ConnectChannel.ForAddress(server.BaseAddress.ToString(), new() { HttpClient = httpClient });
         return (server, channel);
     }
 
@@ -65,7 +66,7 @@ public class GetUnaryTests
         // Manually build a GET request with query params
         var requestMsg = new HelloRequest { Name = "RawGet" };
         var codec = new ProtobufCodec();
-        var body = codec.Serialize(requestMsg);
+        var body = codec.SerializeToArray(requestMsg);
         var messageEncoded = Convert.ToBase64String(body)
             .Replace('+', '-')
             .Replace('/', '_')

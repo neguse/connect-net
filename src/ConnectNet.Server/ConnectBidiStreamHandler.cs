@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using Google.Protobuf;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using ConnectNet.Pooling;
 
 namespace ConnectNet.Server;
 
@@ -69,10 +70,14 @@ internal static class ConnectBidiStreamHandler
         // Parse Connect-Timeout-Ms header
         CancellationTokenSource? timeoutCts = null;
         var ct = httpContext.RequestAborted;
+        var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
 
         if (request.Headers.TryGetValue("Connect-Timeout-Ms", out var timeoutStr) &&
             long.TryParse(timeoutStr, out var timeoutMs) && timeoutMs > 0)
         {
+            // Cap the client-provided timeout to prevent timer-queue exhaustion via huge values.
+            var maxTimeout = serverOptions?.MaxTimeoutMs ?? 0;
+            if (maxTimeout > 0 && timeoutMs > maxTimeout) timeoutMs = maxTimeout;
             timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
             timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
             ct = timeoutCts.Token;
@@ -112,9 +117,10 @@ internal static class ConnectBidiStreamHandler
 
             try
             {
-                var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
                 var msgLimit = serverOptions?.MessageReceiveLimit ?? 0;
-                var requestStream = ReadRequestMessages(request.Body, method.RequestParser, codec, requestCompression, compressorRegistry, msgLimit, ct);
+                var receiveLimit = serverOptions?.EffectiveReceiveLimit ?? Envelope.DefaultMaxMessageBytes;
+                var idleTimeoutMs = serverOptions?.StreamIdleTimeoutMs ?? 0;
+                var requestStream = ReadRequestMessages(request.BodyReader, method.RequestParser, codec, requestCompression, compressorRegistry, msgLimit, receiveLimit, idleTimeoutMs, ct);
                 var responseStream = handler(service, requestStream, context);
 
                 bool headersFlushed = false;
@@ -130,10 +136,10 @@ internal static class ConnectBidiStreamHandler
                         headersFlushed = true;
                     }
 
-                    var msgBytes = codec.Serialize(msg);
+                    var msgBytes = codec.SerializeToArray(msg);
                     if (responseCompressor != null)
                     {
-                        msgBytes = responseCompressor.Compress(msgBytes);
+                        msgBytes = responseCompressor.CompressToArray(msgBytes);
                         await Envelope.WriteAsync(response.Body, Envelope.FlagCompressed, msgBytes, ct);
                     }
                     else
@@ -203,55 +209,89 @@ internal static class ConnectBidiStreamHandler
     }
 
     private static async IAsyncEnumerable<IMessage> ReadRequestMessages(
-        Stream bodyStream,
+        System.IO.Pipelines.PipeReader bodyReader,
         MessageParser parser,
         ICodec codec,
         string? requestCompression,
         ConnectCompressorRegistry? compressorRegistry,
         uint messageReceiveLimit,
+        int receiveLimit,
+        long idleTimeoutMs,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         while (true)
         {
-            var envelope = await Envelope.ReadAsync(bodyStream, ct).ConfigureAwait(false);
-            if (envelope == null)
+            // Per-envelope idle deadline (see ConnectClientStreamHandler for rationale).
+            using var idleCts = idleTimeoutMs > 0
+                ? CancellationTokenSource.CreateLinkedTokenSource(ct)
+                : null;
+            if (idleCts != null)
+                idleCts.CancelAfter(TimeSpan.FromMilliseconds(idleTimeoutMs));
+            var readCt = idleCts?.Token ?? ct;
+
+            EnvelopeFrame? frameNullable;
+            try
+            {
+                frameNullable = await Envelope.ReadFrameAsync(bodyReader, receiveLimit, readCt).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (idleCts != null && idleCts.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                throw new ConnectException(
+                    ConnectCode.DeadlineExceeded,
+                    $"stream idle timeout exceeded ({idleTimeoutMs} ms)");
+            }
+            if (frameNullable == null)
             {
                 yield break;
             }
 
-            var (flags, data) = envelope.Value;
+            (IMessage? msg, bool endOfStream) result;
+            using (var frame = frameNullable.Value)
+            {
+                result = ProcessFrame(frame);
+            }
+            if (result.endOfStream) yield break;
+            if (result.msg != null) yield return result.msg;
+        }
+
+        (IMessage? msg, bool endOfStream) ProcessFrame(EnvelopeFrame frame)
+        {
+            var flags = frame.Flags;
+            ReadOnlyMemory<byte> data = frame.Data;
 
             if ((flags & Envelope.FlagEndStream) != 0)
             {
-                yield break;
+                return (null, true);
             }
 
-            // Decompress if flag indicates compression
-            if ((flags & Envelope.FlagCompressed) != 0)
+            ArrayPoolBufferWriter? decompressBuf = null;
+            try
             {
-                if (string.IsNullOrEmpty(requestCompression) || requestCompression == "identity")
+                if ((flags & Envelope.FlagCompressed) != 0)
                 {
-                    throw new ConnectException(ConnectCode.Internal, "received compressed message but compression is identity or not specified");
+                    if (string.IsNullOrEmpty(requestCompression) || requestCompression == "identity")
+                    {
+                        throw new ConnectException(ConnectCode.Internal, "received compressed message but compression is identity or not specified");
+                    }
+                    var decompressor = compressorRegistry?.Get(requestCompression!);
+                    if (decompressor == null)
+                        throw new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {requestCompression}");
+                    decompressBuf = new ArrayPoolBufferWriter();
+                    decompressor.Decompress(data, decompressBuf, receiveLimit);
+                    data = decompressBuf.WrittenMemory;
                 }
-                var decompressor = compressorRegistry?.Get(requestCompression!);
-                if (decompressor != null)
-                {
-                    data = decompressor.Decompress(data);
-                }
-                else
-                {
-                    throw new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {requestCompression}");
-                }
-            }
 
-            // Enforce message size limit after decompression
-            if (messageReceiveLimit > 0 && data.Length > messageReceiveLimit)
+                if (messageReceiveLimit > 0 && data.Length > messageReceiveLimit)
+                {
+                    throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {data.Length} exceeds limit {messageReceiveLimit}");
+                }
+
+                return (codec.Deserialize(data, parser), false);
+            }
+            finally
             {
-                throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {data.Length} exceeds limit {messageReceiveLimit}");
+                decompressBuf?.Dispose();
             }
-
-            var message = codec.Deserialize(data, parser);
-            yield return message;
         }
     }
 }

@@ -115,7 +115,9 @@ internal static class ClientHarness
         var scheme = request.ServerTlsCert.IsEmpty ? "http" : "https";
         var baseUri = $"{scheme}://{request.Host}:{request.Port}";
 
-        var channel = new ConnectChannel(httpClient, baseUri, codec, channelOptions);
+        channelOptions.HttpClient = httpClient;
+        channelOptions.Codec = codec;
+        var channel = ConnectChannel.ForAddress(baseUri, channelOptions);
 
         // Build CallOptions
         var callOptions = new CallOptions();

@@ -28,7 +28,7 @@ public class EndToEndTests
 
         var server = app.GetTestServer();
         var httpClient = server.CreateClient();
-        var channel = new ConnectChannel(httpClient, server.BaseAddress.ToString());
+        var channel = ConnectChannel.ForAddress(server.BaseAddress.ToString(), new() { HttpClient = httpClient });
         return (server, channel);
     }
 

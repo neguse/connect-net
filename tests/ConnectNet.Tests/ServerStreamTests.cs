@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Xunit;
+using ConnectNet.Pooling;
 
 namespace ConnectNet.Tests;
 
@@ -34,7 +35,7 @@ public class ServerStreamTests
 
         var server = app.GetTestServer();
         var httpClient = server.CreateClient();
-        var channel = new ConnectChannel(httpClient, server.BaseAddress.ToString());
+        var channel = ConnectChannel.ForAddress(server.BaseAddress.ToString(), new() { HttpClient = httpClient });
         return (server, channel, httpClient);
     }
 
@@ -68,7 +69,7 @@ public class ServerStreamTests
             // Build envelope-wrapped request
             var requestMessage = new HelloRequest { Name = "RawTest" };
             var codec = new ProtobufCodec();
-            var requestBytes = codec.Serialize(requestMessage);
+            var requestBytes = codec.SerializeToArray(requestMessage);
 
             using var envelopeStream = new MemoryStream();
             await Envelope.WriteAsync(envelopeStream, 0x00, requestBytes);

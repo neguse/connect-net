@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf;
+using ConnectNet.Pooling;
 
 namespace ConnectNet.Client;
 
@@ -39,7 +40,7 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
         CancellationToken ct)
     {
         _httpClient = httpClient;
-        _uri = new Uri(baseUri, procedure);
+        _uri = ConnectChannel.BuildProcedureUri(baseUri, procedure);
         _codec = codec;
         _channelOptions = channelOptions;
         _options = options;
@@ -50,11 +51,11 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
     {
         await EnsureRequestStartedAsync().ConfigureAwait(false);
 
-        var data = _codec.Serialize(message);
+        var data = _codec.SerializeToArray(message);
         byte flags = 0x00;
         if (_channelOptions.RequestCompressor != null)
         {
-            data = _channelOptions.RequestCompressor.Compress(data);
+            data = _channelOptions.RequestCompressor.CompressToArray(data);
             flags = Envelope.FlagCompressed;
         }
         await Envelope.WriteAsync(_requestStream!, flags, data, _ct).ConfigureAwait(false);
@@ -108,17 +109,18 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
     public async IAsyncEnumerable<TRes> ReadResponsesAsync(
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var linkedCt = _ct;
-        if (ct != default)
-        {
-            linkedCt = CancellationTokenSource.CreateLinkedTokenSource(_ct, ct).Token;
-        }
+        // Hold the linked CTS in a using-scope so callbacks registered on _ct aren't leaked
+        // for the lifetime of _ct (which can be the channel's long-lived token).
+        using var linkedCts = ct == default
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(_ct, ct);
+        var linkedCt = linkedCts?.Token ?? _ct;
 
         // If no messages were sent, start the request now
         await EnsureRequestStartedAsync().ConfigureAwait(false);
 
         // Wait for response
-        var httpResponse = await _responseTask!.ConfigureAwait(false);
+        using var httpResponse = await _responseTask!.ConfigureAwait(false);
 
         // Extract response headers early so they are available even on error
         if (_options != null)
@@ -126,9 +128,11 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
             ConnectChannel.ExtractResponseHeaders(httpResponse, _options);
         }
 
+        var maxResponseBytes = _channelOptions.MaxResponseBytes;
+
         if (!httpResponse.IsSuccessStatusCode)
         {
-            var errorBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            var errorBytes = await ConnectChannel.ReadBoundedAsync(httpResponse.Content, maxResponseBytes, linkedCt).ConfigureAwait(false);
             var errorContentEncoding = httpResponse.Content.Headers.ContentEncoding.FirstOrDefault();
             if (errorContentEncoding != null)
             {
@@ -138,7 +142,11 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
                 {
                     try
                     {
-                        errorBytes = decompressor.Decompress(errorBytes);
+                        errorBytes = decompressor.DecompressToArray(errorBytes, maxResponseBytes);
+                    }
+                    catch (ConnectException)
+                    {
+                        throw;
                     }
                     catch
                     {
@@ -146,8 +154,7 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
                     }
                 }
             }
-            var errorBody = Encoding.UTF8.GetString(errorBytes);
-            throw ConnectChannel.ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
+            throw ConnectChannel.ParseErrorResponse((ReadOnlyMemory<byte>)errorBytes, (int)httpResponse.StatusCode);
         }
 
         // Check if server is sending compressed envelopes
@@ -164,56 +171,74 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
         }
 
         using var responseStream = await httpResponse.Content.ReadAsStreamAsync().ConfigureAwait(false);
+        var responseReader = System.IO.Pipelines.PipeReader.Create(responseStream);
 
         while (true)
         {
-            var envelope = await Envelope.ReadAsync(responseStream, linkedCt).ConfigureAwait(false);
-            if (envelope == null)
+            var frameNullable = await Envelope.ReadFrameAsync(responseReader, maxResponseBytes, linkedCt).ConfigureAwait(false);
+            if (frameNullable == null)
             {
-                break;
+                throw new ConnectException(
+                    ConnectCode.Internal,
+                    "stream ended without EndStream envelope");
             }
 
-            var (flags, data) = envelope.Value;
-
-            // Decompress if flag indicates compression
-            if ((flags & Envelope.FlagCompressed) != 0)
+            (TRes? msg, bool endOfStream) result;
+            using (var frame = frameNullable.Value)
             {
-                if (serverCompression == null)
-                    throw new ConnectException(ConnectCode.Internal, "received compressed message but no compression was negotiated");
-                var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
-                    string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
-                if (decompressor != null)
-                    data = decompressor.Decompress(data);
-                else
-                    throw new ConnectException(ConnectCode.Internal, $"unknown compression: {serverCompression}");
+                result = ProcessFrame(frame);
             }
+            if (result.endOfStream) yield break;
+            if (result.msg != null) yield return result.msg;
+        }
 
-            if ((flags & Envelope.FlagEndStream) != 0)
+        (TRes? msg, bool endOfStream) ProcessFrame(EnvelopeFrame frame)
+        {
+            var flags = frame.Flags;
+            ReadOnlyMemory<byte> data = frame.Data;
+            ArrayPoolBufferWriter? decompressBuf = null;
+            try
             {
-                // Parse EndStream JSON
-                var endStreamJson = Encoding.UTF8.GetString(data);
-                using var doc = JsonDocument.Parse(endStreamJson);
-                var root = doc.RootElement;
-
-                // Extract trailers from EndStream metadata
-                if (_options != null && root.TryGetProperty("metadata", out var metadataElement))
+                if ((flags & Envelope.FlagCompressed) != 0)
                 {
-                    ConnectChannel.ExtractEndStreamTrailers(metadataElement, _options);
+                    if (serverCompression == null)
+                        throw new ConnectException(ConnectCode.Internal, "received compressed message but no compression was negotiated");
+                    var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                        string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
+                    if (decompressor == null)
+                        throw new ConnectException(ConnectCode.Internal, $"unknown compression: {serverCompression}");
+                    decompressBuf = new ArrayPoolBufferWriter();
+                    decompressor.Decompress(data, decompressBuf, maxResponseBytes);
+                    data = decompressBuf.WrittenMemory;
                 }
 
-                if (root.TryGetProperty("error", out var errorElement) && errorElement.ValueKind != JsonValueKind.Null)
+                if ((flags & Envelope.FlagEndStream) != 0)
                 {
-                    var errorJson = errorElement.GetRawText();
-                    var connectError = ConnectException.TryFromJson(errorJson);
-                    if (connectError != null)
-                        throw connectError;
+                    var endStreamJson = Encoding.UTF8.GetString(data.Span);
+                    using var doc = JsonDocument.Parse(endStreamJson);
+                    var root = doc.RootElement;
+
+                    if (_options != null && root.TryGetProperty("metadata", out var metadataElement))
+                    {
+                        ConnectChannel.ExtractEndStreamTrailers(metadataElement, _options);
+                    }
+
+                    if (root.TryGetProperty("error", out var errorElement) && errorElement.ValueKind != JsonValueKind.Null)
+                    {
+                        var connectError = ConnectException.TryFromJsonElement(errorElement);
+                        if (connectError != null)
+                            throw connectError;
+                    }
+                    return (default, true);
                 }
 
-                yield break;
+                var message = data.Length > 0 ? _codec.Deserialize<TRes>(data) : new TRes();
+                return (message, false);
             }
-
-            var message = data.Length > 0 ? _codec.Deserialize<TRes>(data) : new TRes();
-            yield return message;
+            finally
+            {
+                decompressBuf?.Dispose();
+            }
         }
     }
 

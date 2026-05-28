@@ -343,6 +343,12 @@ This exposes:
 - `GET /connect/v1/services` — JSON list of registered services
 - `POST /grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo` — gRPC reflection (list_services)
 
+> **Security note** — `MapConnectReflection` and `MapConnectHealthCheck` expose service
+> inventory and liveness state with no built-in authentication. Treat them like internal
+> admin endpoints: restrict reachability at the infrastructure layer (LB / Ingress ACL,
+> private VPC, mTLS) rather than relying on application-level auth. If you only need
+> reflection for local development, gate the calls on an environment check.
+
 ### Custom Headers and Trailers
 
 ```csharp

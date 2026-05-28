@@ -9,6 +9,23 @@ namespace ConnectNet;
 
 public class ConnectException : Exception
 {
+    /// <summary>
+    /// Maximum recursion depth accepted when parsing an error JSON returned by an untrusted peer.
+    /// </summary>
+    private const int MaxJsonDepth = 32;
+
+    /// <summary>
+    /// Maximum number of detail entries kept when parsing an error JSON. A malicious peer
+    /// could otherwise return millions of details to exhaust memory on the receiver.
+    /// </summary>
+    private const int MaxDetailCount = 256;
+
+    /// <summary>
+    /// Maximum size in bytes of any single detail value (base64-decoded). Anything larger is
+    /// silently dropped during parsing.
+    /// </summary>
+    private const int MaxDetailValueSize = 64 * 1024;
+
     public ConnectCode Code { get; }
     public IReadOnlyList<ConnectErrorDetail> Details { get; }
 
@@ -48,50 +65,98 @@ public class ConnectException : Exception
     {
         if (string.IsNullOrWhiteSpace(json))
             return null;
-
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            if (root.ValueKind != JsonValueKind.Object)
-                return null;
-
-            var code = fallbackCode;
-            if (root.TryGetProperty("code", out var codeProp) && codeProp.ValueKind == JsonValueKind.String)
-            {
-                code = TryCodeFromString(codeProp.GetString() ?? "") ?? fallbackCode;
-            }
-
-            var message = "";
-            if (root.TryGetProperty("message", out var msgProp) && msgProp.ValueKind == JsonValueKind.String)
-            {
-                message = msgProp.GetString() ?? "";
-            }
-
-            var details = new List<ConnectErrorDetail>();
-            if (root.TryGetProperty("details", out var detailsProp) && detailsProp.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var d in detailsProp.EnumerateArray())
-                {
-                    if (d.ValueKind != JsonValueKind.Object)
-                        continue;
-                    if (!d.TryGetProperty("type", out var typeProp) || typeProp.ValueKind != JsonValueKind.String)
-                        continue;
-                    if (!d.TryGetProperty("value", out var valueProp) || valueProp.ValueKind != JsonValueKind.String)
-                        continue;
-                    var type = typeProp.GetString() ?? "";
-                    var value = Base64DecodeUnpadded(valueProp.GetString() ?? "");
-                    details.Add(new ConnectErrorDetail(type, value));
-                }
-            }
-
-            return new ConnectException(code, message, details);
+            var options = new JsonDocumentOptions { MaxDepth = MaxJsonDepth };
+            using var doc = JsonDocument.Parse(json, options);
+            return TryFromJsonElement(doc.RootElement, fallbackCode);
         }
         catch (JsonException)
         {
             return null;
         }
+        catch (ArgumentException)
+        {
+            // Triggered, e.g., when JsonDocument receives a string with invalid surrogate pairs.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// UTF-8 entry point that skips the <c>byte[] → string</c> conversion. Use this when the
+    /// error JSON is available as a <see cref="ReadOnlyMemory{T}"/>.
+    /// </summary>
+    public static ConnectException? TryFromJson(ReadOnlyMemory<byte> utf8Json, ConnectCode fallbackCode = ConnectCode.Unknown)
+    {
+        if (utf8Json.IsEmpty) return null;
+        try
+        {
+            var options = new JsonDocumentOptions { MaxDepth = MaxJsonDepth };
+            using var doc = JsonDocument.Parse(utf8Json, options);
+            return TryFromJsonElement(doc.RootElement, fallbackCode);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Builds a <see cref="ConnectException"/> from an already-parsed JSON element. Used by
+    /// the streaming code path where <see cref="EnvelopeFrame"/> JSON has already been
+    /// decoded into a <see cref="JsonDocument"/>.
+    /// </summary>
+    public static ConnectException? TryFromJsonElement(JsonElement root, ConnectCode fallbackCode = ConnectCode.Unknown)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var code = fallbackCode;
+        if (root.TryGetProperty("code", out var codeProp) && codeProp.ValueKind == JsonValueKind.String)
+        {
+            code = TryCodeFromString(codeProp.GetString() ?? "") ?? fallbackCode;
+        }
+
+        var message = "";
+        if (root.TryGetProperty("message", out var msgProp) && msgProp.ValueKind == JsonValueKind.String)
+        {
+            message = msgProp.GetString() ?? "";
+        }
+
+        var details = new List<ConnectErrorDetail>();
+        if (root.TryGetProperty("details", out var detailsProp) && detailsProp.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var d in detailsProp.EnumerateArray())
+            {
+                if (details.Count >= MaxDetailCount)
+                    break;
+                if (d.ValueKind != JsonValueKind.Object)
+                    continue;
+                if (!d.TryGetProperty("type", out var typeProp) || typeProp.ValueKind != JsonValueKind.String)
+                    continue;
+                if (!d.TryGetProperty("value", out var valueProp) || valueProp.ValueKind != JsonValueKind.String)
+                    continue;
+                var type = typeProp.GetString() ?? "";
+                byte[] value;
+                try
+                {
+                    value = Base64DecodeUnpadded(valueProp.GetString() ?? "");
+                }
+                catch (FormatException)
+                {
+                    continue;
+                }
+                if (value.Length > MaxDetailValueSize)
+                    continue;
+                details.Add(new ConnectErrorDetail(type, value));
+            }
+        }
+
+        return new ConnectException(code, message, details);
     }
 
     public static ConnectException FromJson(string json)
@@ -148,9 +213,11 @@ public class ConnectException : Exception
 
     private static byte[] Base64DecodeUnpadded(string input)
     {
-        // Add padding if needed for standard base64 decoder
+        // Add padding if needed for standard base64 decoder. Length % 4 == 1 is invalid and
+        // would otherwise cause Convert.FromBase64String to throw a FormatException up the stack.
         switch (input.Length % 4)
         {
+            case 1: throw new FormatException("invalid base64 length");
             case 2: input += "=="; break;
             case 3: input += "="; break;
         }

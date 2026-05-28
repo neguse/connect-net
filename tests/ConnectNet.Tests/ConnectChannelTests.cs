@@ -35,7 +35,7 @@ public class ConnectChannelTests
             };
         });
 
-        var channel = new ConnectChannel(new HttpClient(handler), "https://example.com");
+        var channel = ConnectChannel.ForAddress("https://example.com", new() { HttpHandler = handler });
         var result = await channel.UnaryAsync<HelloRequest, HelloResponse>(
             "/example.GreeterService/SayHello",
             new HelloRequest { Name = "test" });
@@ -55,7 +55,7 @@ public class ConnectChannelTests
             };
         });
 
-        var channel = new ConnectChannel(new HttpClient(handler), "https://example.com");
+        var channel = ConnectChannel.ForAddress("https://example.com", new() { HttpHandler = handler });
         var ex = await Assert.ThrowsAsync<ConnectException>(() =>
             channel.UnaryAsync<HelloRequest, HelloResponse>(
                 "/example.GreeterService/SayHello",
@@ -84,7 +84,7 @@ public class ConnectChannelTests
             };
         });
 
-        var channel = new ConnectChannel(new HttpClient(handler), "https://example.com");
+        var channel = ConnectChannel.ForAddress("https://example.com", new() { HttpHandler = handler });
         await channel.UnaryAsync<HelloRequest, HelloResponse>(
             "/example.GreeterService/SayHello",
             new HelloRequest { Name = "test" },

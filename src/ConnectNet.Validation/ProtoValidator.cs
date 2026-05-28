@@ -9,17 +9,31 @@ namespace ConnectNet.Validation;
 
 public class ProtoValidator
 {
+    /// <summary>
+    /// Hard cap on message nesting depth during validation. A recursive proto crafted to
+    /// exceed this depth would cause StackOverflowException (which is uncatchable in .NET);
+    /// rejecting early surfaces it as a normal validation result instead.
+    /// </summary>
+    public const int MaxRecursionDepth = 32;
+
     private readonly ConstraintCache _cache = new();
 
     public ValidationResult Validate(IMessage message)
     {
         var violations = new List<Violation>();
-        ValidateMessage(message, "", violations);
+        ValidateMessage(message, "", violations, depth: 0);
         return violations.Count == 0 ? ValidationResult.Success : ValidationResult.Fail(violations);
     }
 
-    private void ValidateMessage(IMessage message, string prefix, List<Violation> violations)
+    private void ValidateMessage(IMessage message, string prefix, List<Violation> violations, int depth)
     {
+        if (depth >= MaxRecursionDepth)
+        {
+            violations.Add(new Violation(prefix, "recursion_limit",
+                $"message nesting exceeds validation recursion limit ({MaxRecursionDepth})"));
+            return;
+        }
+
         var constraints = _cache.GetFieldConstraints(message.Descriptor);
 
         foreach (var constraint in constraints)
@@ -59,7 +73,7 @@ public class ProtoValidator
                 && !field.IsMap
                 && value is IMessage nestedMessage)
             {
-                ValidateMessage(nestedMessage, path, violations);
+                ValidateMessage(nestedMessage, path, violations, depth + 1);
             }
         }
 

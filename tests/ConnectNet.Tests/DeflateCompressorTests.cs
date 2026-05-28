@@ -1,5 +1,6 @@
 using ConnectNet;
 using Xunit;
+using ConnectNet.Pooling;
 
 namespace ConnectNet.Tests;
 
@@ -17,8 +18,8 @@ public class DeflateCompressorTests
     {
         var compressor = new DeflateCompressor();
         var original = System.Text.Encoding.UTF8.GetBytes("Hello, Deflate compression test!");
-        var compressed = compressor.Compress(original);
-        var decompressed = compressor.Decompress(compressed);
+        var compressed = compressor.CompressToArray(original);
+        var decompressed = compressor.DecompressToArray(compressed, 1024);
         Assert.Equal(original, decompressed);
     }
 
@@ -27,8 +28,8 @@ public class DeflateCompressorTests
     {
         var compressor = new DeflateCompressor();
         var original = System.Array.Empty<byte>();
-        var compressed = compressor.Compress(original);
-        var decompressed = compressor.Decompress(compressed);
+        var compressed = compressor.CompressToArray(original);
+        var decompressed = compressor.DecompressToArray(compressed, 1024);
         Assert.Equal(original, decompressed);
     }
 }

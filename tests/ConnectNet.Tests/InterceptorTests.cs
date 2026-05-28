@@ -132,7 +132,9 @@ public class InterceptorTests
 
         var server = app.GetTestServer();
         var httpClient = server.CreateClient();
-        var channel = new ConnectChannel(httpClient, server.BaseAddress.ToString(), channelOptions: clientOptions);
+        clientOptions ??= new ConnectChannelOptions();
+        clientOptions.HttpClient = httpClient;
+        var channel = ConnectChannel.ForAddress(server.BaseAddress.ToString(), clientOptions);
         return (server, channel);
     }
 

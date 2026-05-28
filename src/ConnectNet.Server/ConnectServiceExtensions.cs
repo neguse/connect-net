@@ -14,8 +14,31 @@ public class ConnectServerOptions
     /// <summary>
     /// Maximum allowed size in bytes for incoming messages. 0 means no limit.
     /// When set, messages exceeding this size will be rejected with ResourceExhausted.
+    /// Defaults to 4 MiB to provide a safe out-of-the-box value; raise this for services
+    /// that legitimately accept larger payloads.
     /// </summary>
-    public uint MessageReceiveLimit { get; set; }
+    public uint MessageReceiveLimit { get; set; } = 4 * 1024 * 1024;
+
+    /// <summary>
+    /// Maximum upper-bound timeout (ms) accepted from a client via Connect-Timeout-Ms.
+    /// Defaults to 1 hour. Set to 0 to disable the cap.
+    /// </summary>
+    public long MaxTimeoutMs { get; set; } = 60L * 60L * 1000L;
+
+    /// <summary>
+    /// Maximum time (in milliseconds) the server will wait between two consecutive envelopes
+    /// on a streaming request before aborting the call with DeadlineExceeded. Defaults to
+    /// <c>0</c> (no per-message idle bound), matching grpc-go / grpc-java defaults that rely
+    /// on the transport layer (HTTP/2 PING, TCP keep-alive, Kestrel MinRequestBodyDataRate)
+    /// for liveness. Set this to a positive value to defend against slow-loris style
+    /// attacks on streaming methods.
+    /// </summary>
+    public long StreamIdleTimeoutMs { get; set; } = 0;
+
+    internal int EffectiveReceiveLimit
+        => MessageReceiveLimit == 0
+            ? int.MaxValue
+            : MessageReceiveLimit > int.MaxValue ? int.MaxValue : (int)MessageReceiveLimit;
 }
 
 public static class ConnectServiceExtensions

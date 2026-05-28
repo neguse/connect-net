@@ -18,6 +18,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Xunit;
+using ConnectNet.Pooling;
 
 namespace ConnectNet.Tests;
 
@@ -35,7 +36,7 @@ public class TimeoutTests
 
         var server = app.GetTestServer();
         var httpClient = server.CreateClient();
-        var channel = new ConnectChannel(httpClient, server.BaseAddress.ToString());
+        var channel = ConnectChannel.ForAddress(server.BaseAddress.ToString(), new() { HttpClient = httpClient });
         return (server, channel, httpClient);
     }
 
@@ -47,7 +48,7 @@ public class TimeoutTests
         {
             var requestMessage = new HelloRequest { Name = "slow" };
             var codec = new ProtobufCodec();
-            var requestBytes = codec.Serialize(requestMessage);
+            var requestBytes = codec.SerializeToArray(requestMessage);
 
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post,
                 "/example.GreeterService/SlowSayHello");
@@ -86,7 +87,7 @@ public class TimeoutTests
         {
             var requestMessage = new HelloRequest { Name = "slowstream" };
             var codec = new ProtobufCodec();
-            var requestBytes = codec.Serialize(requestMessage);
+            var requestBytes = codec.SerializeToArray(requestMessage);
 
             // Build envelope-wrapped request
             using var envelopeStream = new MemoryStream();

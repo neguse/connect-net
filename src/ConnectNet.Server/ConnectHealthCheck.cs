@@ -20,8 +20,10 @@ public enum HealthStatus
 
 public class ConnectHealthService
 {
-    private readonly Dictionary<string, HealthStatus> _statuses = new();
-    private HealthStatus _overallStatus = HealthStatus.Serving;
+    // ConcurrentDictionary so SetStatus during runtime cannot corrupt Dictionary internals
+    // for concurrent GetStatus readers.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, HealthStatus> _statuses = new();
+    private volatile HealthStatus _overallStatus = HealthStatus.Serving;
 
     public void SetStatus(string service, HealthStatus status)
         => _statuses[service] = status;
@@ -124,28 +126,39 @@ public static class ConnectHealthCheckExtensions
 
     /// <summary>
     /// Parse HealthCheckRequest protobuf: field 1, wire type 2 (length-delimited string).
+    /// Returns empty string on malformed input — clients cannot crash the health endpoint
+    /// with bogus varints or out-of-range lengths.
     /// </summary>
     private static string ParseProtobufRequest(byte[] data)
     {
         if (data.Length == 0)
             return "";
 
-        var offset = 0;
-        while (offset < data.Length)
+        try
         {
-            var tag = DecodeVarint(data, ref offset);
-            var fieldNumber = tag >> 3;
-            var wireType = tag & 0x7;
-
-            if (fieldNumber == 1 && wireType == 2)
+            var offset = 0;
+            while (offset < data.Length)
             {
-                var length = (int)DecodeVarint(data, ref offset);
-                var value = System.Text.Encoding.UTF8.GetString(data, offset, length);
-                return value;
-            }
+                var tag = DecodeVarint(data, ref offset);
+                var fieldNumber = tag >> 3;
+                var wireType = tag & 0x7;
 
-            // Skip unknown fields
-            SkipField(data, wireType, ref offset);
+                if (fieldNumber == 1 && wireType == 2)
+                {
+                    var rawLength = DecodeVarint(data, ref offset);
+                    if (rawLength > int.MaxValue) return "";
+                    var length = (int)rawLength;
+                    if (length < 0 || offset + length > data.Length) return "";
+                    return System.Text.Encoding.UTF8.GetString(data, offset, length);
+                }
+
+                // Skip unknown fields
+                SkipField(data, wireType, ref offset);
+            }
+        }
+        catch (InvalidDataException)
+        {
+            return "";
         }
 
         return "";
@@ -171,15 +184,19 @@ public static class ConnectHealthCheckExtensions
     {
         ulong result = 0;
         var shift = 0;
+        var consumed = 0;
         while (offset < data.Length)
         {
+            if (consumed >= 10)
+                throw new InvalidDataException("varint too long");
             var b = data[offset++];
+            consumed++;
             result |= (ulong)(b & 0x7F) << shift;
             if ((b & 0x80) == 0)
-                break;
+                return result;
             shift += 7;
         }
-        return result;
+        throw new InvalidDataException("truncated varint");
     }
 
     private static void EncodeVarint(MemoryStream ms, ulong value)
@@ -200,15 +217,23 @@ public static class ConnectHealthCheckExtensions
                 DecodeVarint(data, ref offset);
                 break;
             case 1: // 64-bit
+                if (offset + 8 > data.Length) throw new InvalidDataException("truncated fixed64");
                 offset += 8;
                 break;
             case 2: // length-delimited
-                var length = (int)DecodeVarint(data, ref offset);
+                var rawLength = DecodeVarint(data, ref offset);
+                if (rawLength > int.MaxValue) throw new InvalidDataException("length too large");
+                var length = (int)rawLength;
+                if (length < 0 || offset + length > data.Length)
+                    throw new InvalidDataException("length-delimited field out of range");
                 offset += length;
                 break;
             case 5: // 32-bit
+                if (offset + 4 > data.Length) throw new InvalidDataException("truncated fixed32");
                 offset += 4;
                 break;
+            default:
+                throw new InvalidDataException($"unknown wire type {wireType}");
         }
     }
 }

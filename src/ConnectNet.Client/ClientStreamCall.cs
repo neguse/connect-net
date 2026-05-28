@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf;
+using ConnectNet.Pooling;
 
 namespace ConnectNet.Client;
 
@@ -33,7 +34,7 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
         CancellationToken ct)
     {
         _httpClient = httpClient;
-        _uri = new Uri(baseUri, procedure);
+        _uri = ConnectChannel.BuildProcedureUri(baseUri, procedure);
         _codec = codec;
         _channelOptions = channelOptions;
         _options = options;
@@ -42,11 +43,11 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
 
     public async Task SendAsync(TReq message)
     {
-        var data = _codec.Serialize(message);
+        var data = _codec.SerializeToArray(message);
         byte flags = 0x00;
         if (_channelOptions.RequestCompressor != null)
         {
-            data = _channelOptions.RequestCompressor.Compress(data);
+            data = _channelOptions.RequestCompressor.CompressToArray(data);
             flags = Envelope.FlagCompressed;
         }
         await Envelope.WriteAsync(_buffer, flags, data, _ct).ConfigureAwait(false);
@@ -84,7 +85,7 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
             }
         }
 
-        var httpResponse = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, _ct).ConfigureAwait(false);
+        using var httpResponse = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, _ct).ConfigureAwait(false);
 
         // Extract response headers early so they are available even on error
         if (_options != null)
@@ -92,9 +93,11 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
             ConnectChannel.ExtractResponseHeaders(httpResponse, _options);
         }
 
+        var maxResponseBytes = _channelOptions.MaxResponseBytes;
+
         if (!httpResponse.IsSuccessStatusCode)
         {
-            var errorBytes = await httpResponse.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            var errorBytes = await ConnectChannel.ReadBoundedAsync(httpResponse.Content, maxResponseBytes, _ct).ConfigureAwait(false);
             var errorContentEncoding = httpResponse.Content.Headers.ContentEncoding.FirstOrDefault();
             if (errorContentEncoding != null)
             {
@@ -104,7 +107,11 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
                 {
                     try
                     {
-                        errorBytes = decompressor.Decompress(errorBytes);
+                        errorBytes = decompressor.DecompressToArray(errorBytes, maxResponseBytes);
+                    }
+                    catch (ConnectException)
+                    {
+                        throw;
                     }
                     catch
                     {
@@ -112,8 +119,7 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
                     }
                 }
             }
-            var errorBody = Encoding.UTF8.GetString(errorBytes);
-            throw ConnectChannel.ParseErrorResponse(errorBody, (int)httpResponse.StatusCode);
+            throw ConnectChannel.ParseErrorResponse((ReadOnlyMemory<byte>)errorBytes, (int)httpResponse.StatusCode);
         }
 
         // Check if server is sending compressed envelopes
@@ -130,60 +136,68 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
         }
 
         using var responseStream = await httpResponse.Content.ReadAsStreamAsync().ConfigureAwait(false);
+        var responseReader = System.IO.Pipelines.PipeReader.Create(responseStream);
 
         TRes? result = default;
 
         while (true)
         {
-            var envelope = await Envelope.ReadAsync(responseStream, _ct).ConfigureAwait(false);
-            if (envelope == null)
+            var frameNullable = await Envelope.ReadFrameAsync(responseReader, maxResponseBytes, _ct).ConfigureAwait(false);
+            if (frameNullable == null)
             {
-                break;
+                throw new ConnectException(
+                    ConnectCode.Internal,
+                    "stream ended without EndStream envelope");
             }
 
-            var (flags, data) = envelope.Value;
-
-            // Decompress if flag indicates compression
-            if ((flags & Envelope.FlagCompressed) != 0)
+            using var frame = frameNullable.Value;
+            var flags = frame.Flags;
+            ReadOnlyMemory<byte> data = frame.Data;
+            ArrayPoolBufferWriter? decompressBuf = null;
+            try
             {
-                if (serverCompression == null)
-                    throw new ConnectException(ConnectCode.Internal, "received compressed message but no compression was negotiated");
-                var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
-                    string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
-                if (decompressor != null)
-                    data = decompressor.Decompress(data);
-                else
-                    throw new ConnectException(ConnectCode.Internal, $"unknown compression: {serverCompression}");
-            }
-
-            if ((flags & Envelope.FlagEndStream) != 0)
-            {
-                // Parse EndStream JSON
-                var endStreamJson = Encoding.UTF8.GetString(data);
-                using var doc = JsonDocument.Parse(endStreamJson);
-                var root = doc.RootElement;
-
-                // Extract trailers from EndStream metadata
-                if (_options != null && root.TryGetProperty("metadata", out var metadataElement))
+                if ((flags & Envelope.FlagCompressed) != 0)
                 {
-                    ConnectChannel.ExtractEndStreamTrailers(metadataElement, _options);
+                    if (serverCompression == null)
+                        throw new ConnectException(ConnectCode.Internal, "received compressed message but no compression was negotiated");
+                    var decompressor = _channelOptions.Decompressors.FirstOrDefault(d =>
+                        string.Equals(d.Name, serverCompression, StringComparison.OrdinalIgnoreCase));
+                    if (decompressor == null)
+                        throw new ConnectException(ConnectCode.Internal, $"unknown compression: {serverCompression}");
+                    decompressBuf = new ArrayPoolBufferWriter();
+                    decompressor.Decompress(data, decompressBuf, maxResponseBytes);
+                    data = decompressBuf.WrittenMemory;
                 }
 
-                if (root.TryGetProperty("error", out var errorElement) && errorElement.ValueKind != JsonValueKind.Null)
+                if ((flags & Envelope.FlagEndStream) != 0)
                 {
-                    var errorJson = errorElement.GetRawText();
-                    var connectError = ConnectException.TryFromJson(errorJson);
-                    if (connectError != null)
-                        throw connectError;
+                    var endStreamJson = Encoding.UTF8.GetString(data.Span);
+                    using var doc = JsonDocument.Parse(endStreamJson);
+                    var root = doc.RootElement;
+
+                    if (_options != null && root.TryGetProperty("metadata", out var metadataElement))
+                    {
+                        ConnectChannel.ExtractEndStreamTrailers(metadataElement, _options);
+                    }
+
+                    if (root.TryGetProperty("error", out var errorElement) && errorElement.ValueKind != JsonValueKind.Null)
+                    {
+                        var connectError = ConnectException.TryFromJsonElement(errorElement);
+                        if (connectError != null)
+                            throw connectError;
+                    }
+
+                    break;
                 }
 
-                break;
+                if (result != null)
+                    throw new ConnectException(ConnectCode.Unimplemented, "unexpected extra response in client stream");
+                result = data.Length > 0 ? _codec.Deserialize<TRes>(data) : new TRes();
             }
-
-            // Normal message envelope — should be the single response
-            if (result != null)
-                throw new ConnectException(ConnectCode.Unimplemented, "unexpected extra response in client stream");
-            result = data.Length > 0 ? _codec.Deserialize<TRes>(data) : new TRes();
+            finally
+            {
+                decompressBuf?.Dispose();
+            }
         }
 
         if (result == null)

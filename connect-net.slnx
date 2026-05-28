@@ -14,5 +14,6 @@
     <Project Path="tests/ConnectNet.Tests/ConnectNet.Tests.csproj" />
     <Project Path="tests/ConnectNet.Conformance.Proto/ConnectNet.Conformance.Proto.csproj" />
     <Project Path="tests/ConnectNet.Conformance/ConnectNet.Conformance.csproj" />
+    <Project Path="tests/ConnectNet.Benchmarks/ConnectNet.Benchmarks.csproj" />
   </Folder>
 </Solution>

@@ -1,6 +1,7 @@
 using ConnectNet;
 using ConnectNet.Tests.Proto;
 using Xunit;
+using ConnectNet.Pooling;
 
 namespace ConnectNet.Tests;
 
@@ -18,7 +19,7 @@ public class ProtobufCodecTests
     public void Serialize_RoundTrips()
     {
         var request = new HelloRequest { Name = "test" };
-        var bytes = _codec.Serialize(request);
+        var bytes = _codec.SerializeToArray(request);
         var deserialized = _codec.Deserialize<HelloRequest>(bytes);
         Assert.Equal("test", deserialized.Name);
     }
@@ -27,7 +28,7 @@ public class ProtobufCodecTests
     public void Serialize_EmptyMessage_ReturnsEmptyBytes()
     {
         var request = new HelloRequest();
-        var bytes = _codec.Serialize(request);
+        var bytes = _codec.SerializeToArray(request);
         var deserialized = _codec.Deserialize<HelloRequest>(bytes);
         Assert.Equal("", deserialized.Name);
     }

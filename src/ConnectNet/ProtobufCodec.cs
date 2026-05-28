@@ -1,3 +1,6 @@
+using System;
+using System.Buffers;
+using System.Runtime.InteropServices;
 using Google.Protobuf;
 
 namespace ConnectNet;
@@ -6,19 +9,31 @@ public class ProtobufCodec : ICodec
 {
     public string Name => "proto";
 
-    public byte[] Serialize(IMessage message)
+    public void Serialize(IMessage message, IBufferWriter<byte> destination)
     {
-        return message.ToByteArray();
+        if (destination == null) throw new ArgumentNullException(nameof(destination));
+        // Google.Protobuf supports IBufferWriter<byte> via WriteTo as of recent versions.
+        message.WriteTo(destination);
     }
 
-    public T Deserialize<T>(byte[] data) where T : IMessage<T>, new()
+    public T Deserialize<T>(ReadOnlyMemory<byte> data) where T : IMessage<T>, new()
     {
-        var parser = new MessageParser<T>(() => new T());
-        return parser.ParseFrom(data);
+        var message = new T();
+        if (data.Length == 0) return message;
+        // Fast path: if the memory is array-backed (always the case for ArrayPool /
+        // byte[] origins in this codebase), parse without copying.
+        if (MemoryMarshal.TryGetArray(data, out ArraySegment<byte> seg) && seg.Array != null)
+        {
+            ((IMessage)message).MergeFrom(seg.Array.AsSpan(seg.Offset, seg.Count));
+            return message;
+        }
+        ((IMessage)message).MergeFrom(data.Span);
+        return message;
     }
 
-    public IMessage Deserialize(byte[] data, MessageParser parser)
+    public IMessage Deserialize(ReadOnlyMemory<byte> data, MessageParser parser)
     {
-        return parser.ParseFrom(data);
+        if (data.Length == 0) return parser.ParseFrom(Array.Empty<byte>());
+        return parser.ParseFrom(data.Span);
     }
 }

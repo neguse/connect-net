@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Xunit;
+using ConnectNet.Pooling;
 
 namespace ConnectNet.Tests;
 
@@ -30,7 +31,7 @@ public class JsonCodecTests
     public void Serialize_RoundTrips()
     {
         var request = new HelloRequest { Name = "test" };
-        var bytes = _codec.Serialize(request);
+        var bytes = _codec.SerializeToArray(request);
         var deserialized = _codec.Deserialize<HelloRequest>(bytes);
         Assert.Equal("test", deserialized.Name);
     }
@@ -39,7 +40,7 @@ public class JsonCodecTests
     public void Serialize_ProducesValidJson()
     {
         var request = new HelloRequest { Name = "world" };
-        var bytes = _codec.Serialize(request);
+        var bytes = _codec.SerializeToArray(request);
         var json = Encoding.UTF8.GetString(bytes);
         Assert.Contains("\"name\"", json);
         Assert.Contains("world", json);
@@ -49,7 +50,7 @@ public class JsonCodecTests
     public void Serialize_EmptyMessage_RoundTrips()
     {
         var request = new HelloRequest();
-        var bytes = _codec.Serialize(request);
+        var bytes = _codec.SerializeToArray(request);
         var deserialized = _codec.Deserialize<HelloRequest>(bytes);
         Assert.Equal("", deserialized.Name);
     }
@@ -58,7 +59,7 @@ public class JsonCodecTests
     public void Deserialize_WithMessageParser_RoundTrips()
     {
         var request = new HelloRequest { Name = "parser-test" };
-        var bytes = _codec.Serialize(request);
+        var bytes = _codec.SerializeToArray(request);
         var deserialized = _codec.Deserialize(bytes, HelloRequest.Parser);
         Assert.IsType<HelloRequest>(deserialized);
         Assert.Equal("parser-test", ((HelloRequest)deserialized).Name);
@@ -78,7 +79,7 @@ public class JsonCodecTests
 
         var server = app.GetTestServer();
         var httpClient = server.CreateClient();
-        var channel = new ConnectChannel(httpClient, server.BaseAddress.ToString(), clientCodec);
+        var channel = ConnectChannel.ForAddress(server.BaseAddress.ToString(), new() { HttpClient = httpClient, Codec = clientCodec });
         return (server, channel);
     }
 

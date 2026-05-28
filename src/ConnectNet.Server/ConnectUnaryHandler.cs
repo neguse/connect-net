@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -7,6 +8,7 @@ using System.Threading.Tasks;
 using Google.Protobuf;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using ConnectNet.Pooling;
 
 namespace ConnectNet.Server;
 
@@ -48,10 +50,15 @@ internal static class ConnectUnaryHandler
         // Parse Connect-Timeout-Ms header
         CancellationTokenSource? timeoutCts = null;
         var ct = httpContext.RequestAborted;
+        var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
+        var receiveLimit = serverOptions?.EffectiveReceiveLimit ?? Envelope.DefaultMaxMessageBytes;
 
         if (request.Headers.TryGetValue("Connect-Timeout-Ms", out var timeoutStr) &&
             long.TryParse(timeoutStr, out var timeoutMs) && timeoutMs > 0)
         {
+            // Cap the client-provided timeout to prevent timer-queue exhaustion via huge values.
+            var maxTimeout = serverOptions?.MaxTimeoutMs ?? 0;
+            if (maxTimeout > 0 && timeoutMs > maxTimeout) timeoutMs = maxTimeout;
             timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
             timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
             ct = timeoutCts.Token;
@@ -65,14 +72,17 @@ internal static class ConnectUnaryHandler
         }
         var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
 
+        ArrayPoolBufferWriter? rawWriter = null;
+        ArrayPoolBufferWriter? decompressedWriter = null;
         try
         {
-            // Read and deserialize request
-            using var ms = new MemoryStream();
-            await request.Body.CopyToAsync(ms, ct);
-            var requestBytes = ms.ToArray();
+            // Read request body straight from Kestrel's PipeReader into a pooled buffer writer.
+            // This skips the Stream wrapper and avoids the per-RPC 80 KB scratch allocation
+            // that the prior MemoryStream-based path required.
+            rawWriter = new ArrayPoolBufferWriter();
+            await ReadBodyToWriterAsync(request.BodyReader, rawWriter, receiveLimit, ct);
+            ReadOnlyMemory<byte> requestBytes = rawWriter.WrittenMemory;
 
-            // Decompress request if Content-Encoding is set
             if (request.Headers.TryGetValue("Content-Encoding", out var requestEncoding))
             {
                 var encodingName = requestEncoding.FirstOrDefault();
@@ -83,12 +93,12 @@ internal static class ConnectUnaryHandler
                     {
                         throw new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {encodingName}");
                     }
-                    requestBytes = decompressor.Decompress(requestBytes);
+                    decompressedWriter = new ArrayPoolBufferWriter();
+                    decompressor.Decompress(requestBytes, decompressedWriter, receiveLimit);
+                    requestBytes = decompressedWriter.WrittenMemory;
                 }
             }
 
-            // Enforce message size limit
-            var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
             if (serverOptions != null && serverOptions.MessageReceiveLimit > 0 && requestBytes.Length > serverOptions.MessageReceiveLimit)
             {
                 throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {requestBytes.Length} exceeds limit {serverOptions.MessageReceiveLimit}");
@@ -136,23 +146,35 @@ internal static class ConnectUnaryHandler
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
             }
 
-            var responseBytes = codec.Serialize(responseMessage);
+            // Serialize directly into a pooled buffer writer; the response is then either
+            // written as-is or piped through a compressor that also writes into the pool.
+            using var msgWriter = new ArrayPoolBufferWriter();
+            codec.Serialize(responseMessage, msgWriter);
 
-            // Compress response if client accepts a supported encoding
+            ICompressor? selectedCompressor = null;
             if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding) && compressorRegistry != null)
             {
                 foreach (var name in compressorRegistry.SupportedNames)
                 {
                     if (acceptEncoding.Any(v => v != null && v.Contains(name, StringComparison.OrdinalIgnoreCase)))
                     {
-                        responseBytes = compressorRegistry.Get(name)!.Compress(responseBytes);
+                        selectedCompressor = compressorRegistry.Get(name);
                         response.Headers["Content-Encoding"] = name;
                         break;
                     }
                 }
             }
 
-            await response.Body.WriteAsync(responseBytes, ct);
+            if (selectedCompressor != null)
+            {
+                using var compressedWriter = new ArrayPoolBufferWriter();
+                selectedCompressor.Compress(msgWriter.WrittenMemory, compressedWriter);
+                await response.Body.WriteAsync(compressedWriter.WrittenMemory, ct);
+            }
+            else
+            {
+                await response.Body.WriteAsync(msgWriter.WrittenMemory, ct);
+            }
         }
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)
         {
@@ -183,6 +205,8 @@ internal static class ConnectUnaryHandler
         finally
         {
             timeoutCts?.Dispose();
+            rawWriter?.Dispose();
+            decompressedWriter?.Dispose();
         }
     }
 
@@ -231,10 +255,15 @@ internal static class ConnectUnaryHandler
         // Parse Connect-Timeout-Ms header
         CancellationTokenSource? timeoutCts = null;
         var ct = httpContext.RequestAborted;
+        var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
+        var receiveLimit = serverOptions?.EffectiveReceiveLimit ?? Envelope.DefaultMaxMessageBytes;
 
         if (request.Headers.TryGetValue("Connect-Timeout-Ms", out var timeoutStr) &&
             long.TryParse(timeoutStr, out var timeoutMs) && timeoutMs > 0)
         {
+            // Cap the client-provided timeout to prevent timer-queue exhaustion via huge values.
+            var maxTimeout = serverOptions?.MaxTimeoutMs ?? 0;
+            if (maxTimeout > 0 && timeoutMs > maxTimeout) timeoutMs = maxTimeout;
             timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
             timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
             ct = timeoutCts.Token;
@@ -250,11 +279,25 @@ internal static class ConnectUnaryHandler
 
         try
         {
+            // Reject excessively large GET message params before decoding.
+            if (messageParam.ToString().Length > receiveLimit)
+            {
+                throw new ConnectException(ConnectCode.ResourceExhausted,
+                    $"message param exceeds limit {receiveLimit}");
+            }
+
             // Decode message
             byte[] requestBytes;
             if (request.Query.TryGetValue("base64", out var base64Flag) && base64Flag == "1")
             {
-                requestBytes = Base64UrlDecode(messageParam!);
+                try
+                {
+                    requestBytes = Base64UrlDecode(messageParam!);
+                }
+                catch (FormatException)
+                {
+                    throw new ConnectException(ConnectCode.InvalidArgument, "invalid base64 message");
+                }
             }
             else
             {
@@ -268,12 +311,11 @@ internal static class ConnectUnaryHandler
                 var decompressor = compressorRegistry?.Get(compressionName!);
                 if (decompressor != null)
                 {
-                    requestBytes = decompressor.Decompress(requestBytes);
+                    requestBytes = decompressor.DecompressToArray(requestBytes, receiveLimit);
                 }
             }
 
             // Enforce message size limit
-            var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
             if (serverOptions != null && serverOptions.MessageReceiveLimit > 0 && requestBytes.Length > serverOptions.MessageReceiveLimit)
             {
                 throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {requestBytes.Length} exceeds limit {serverOptions.MessageReceiveLimit}");
@@ -321,23 +363,35 @@ internal static class ConnectUnaryHandler
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
             }
 
-            var responseBytes = codec.Serialize(responseMessage);
+            // Serialize directly into a pooled buffer writer; the response is then either
+            // written as-is or piped through a compressor that also writes into the pool.
+            using var msgWriter = new ArrayPoolBufferWriter();
+            codec.Serialize(responseMessage, msgWriter);
 
-            // Compress response if client accepts a supported encoding
+            ICompressor? selectedCompressor = null;
             if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding) && compressorRegistry != null)
             {
                 foreach (var name in compressorRegistry.SupportedNames)
                 {
                     if (acceptEncoding.Any(v => v != null && v.Contains(name, StringComparison.OrdinalIgnoreCase)))
                     {
-                        responseBytes = compressorRegistry.Get(name)!.Compress(responseBytes);
+                        selectedCompressor = compressorRegistry.Get(name);
                         response.Headers["Content-Encoding"] = name;
                         break;
                     }
                 }
             }
 
-            await response.Body.WriteAsync(responseBytes, ct);
+            if (selectedCompressor != null)
+            {
+                using var compressedWriter = new ArrayPoolBufferWriter();
+                selectedCompressor.Compress(msgWriter.WrittenMemory, compressedWriter);
+                await response.Body.WriteAsync(compressedWriter.WrittenMemory, ct);
+            }
+            else
+            {
+                await response.Body.WriteAsync(msgWriter.WrittenMemory, ct);
+            }
         }
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)
         {
@@ -389,9 +443,47 @@ internal static class ConnectUnaryHandler
         var s = input.Replace('-', '+').Replace('_', '/');
         switch (s.Length % 4)
         {
+            case 1:
+                // Length % 4 == 1 is invalid base64; reject explicitly so the caller can map
+                // it to InvalidArgument instead of a generic 500.
+                throw new FormatException("invalid base64 length");
             case 2: s += "=="; break;
             case 3: s += "="; break;
         }
         return Convert.FromBase64String(s);
+    }
+
+    /// <summary>
+    /// Drains a PipeReader (typically <c>HttpRequest.BodyReader</c>) into the caller's buffer
+    /// writer. Refuses oversize bodies before they reach memory; the scratch path lives in
+    /// the pipeline's own pooled buffers, so this method does not allocate per call.
+    /// </summary>
+    private static async Task ReadBodyToWriterAsync(System.IO.Pipelines.PipeReader reader, ArrayPoolBufferWriter destination, int maxBytes, CancellationToken ct)
+    {
+        long total = 0;
+        while (true)
+        {
+            var result = await reader.ReadAsync(ct).ConfigureAwait(false);
+            var buffer = result.Buffer;
+            if (buffer.Length > 0)
+            {
+                total += buffer.Length;
+                if (total > maxBytes)
+                {
+                    reader.AdvanceTo(buffer.End);
+                    throw new ConnectException(
+                        ConnectCode.ResourceExhausted,
+                        $"request body exceeds limit {maxBytes}");
+                }
+                foreach (var segment in buffer)
+                {
+                    var dest = destination.GetSpan(segment.Length);
+                    segment.Span.CopyTo(dest);
+                    destination.Advance(segment.Length);
+                }
+            }
+            reader.AdvanceTo(buffer.End);
+            if (result.IsCompleted) break;
+        }
     }
 }

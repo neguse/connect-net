@@ -8,8 +8,13 @@ namespace ConnectNet.Validation.Rules;
 
 internal static class StringRuleEvaluator
 {
-    private static readonly Regex EmailRegex = new(@"^[^@\s]+@[^@\s]+\.[^@\s]+$", RegexOptions.Compiled);
-    private static readonly Regex HostnameRegex = new(@"^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$", RegexOptions.Compiled);
+    // Hard cap on regex execution time. ReDoS-prone patterns or pathological inputs (from
+    // a proto definer combined with attacker-controlled values) cannot stall a worker
+    // thread for more than this interval.
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(100);
+
+    private static readonly Regex EmailRegex = new(@"^[^@\s]+@[^@\s]+\.[^@\s]+$", RegexOptions.Compiled, RegexTimeout);
+    private static readonly Regex HostnameRegex = new(@"^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$", RegexOptions.Compiled, RegexTimeout);
 
     public static void Evaluate(StringRules rules, string value, string path, List<Violation> violations)
     {
@@ -58,7 +63,10 @@ internal static class StringRuleEvaluator
         {
             try
             {
-                if (!Regex.IsMatch(value, rules.Pattern))
+                // Construct a Regex with explicit timeout so user-supplied patterns combined
+                // with hostile inputs can never spin a thread indefinitely (ReDoS).
+                var re = new Regex(rules.Pattern, RegexOptions.None, RegexTimeout);
+                if (!re.IsMatch(value))
                 {
                     violations.Add(new Violation(
                         path,
@@ -73,6 +81,14 @@ internal static class StringRuleEvaluator
                     path,
                     "string.pattern",
                     $"invalid regex pattern \"{rules.Pattern}\"",
+                    value));
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                violations.Add(new Violation(
+                    path,
+                    "string.pattern",
+                    $"regex match timed out for pattern \"{rules.Pattern}\"",
                     value));
             }
         }
@@ -141,7 +157,7 @@ internal static class StringRuleEvaluator
         switch (rules.WellKnownCase)
         {
             case StringRules.WellKnownOneofCase.Email when rules.Email:
-                if (!EmailRegex.IsMatch(value))
+                if (!SafeIsMatch(EmailRegex, value))
                 {
                     violations.Add(new Violation(
                         path,
@@ -152,7 +168,7 @@ internal static class StringRuleEvaluator
                 break;
 
             case StringRules.WellKnownOneofCase.Hostname when rules.Hostname:
-                if (string.IsNullOrEmpty(value) || value.Length > 253 || !HostnameRegex.IsMatch(value))
+                if (string.IsNullOrEmpty(value) || value.Length > 253 || !SafeIsMatch(HostnameRegex, value))
                 {
                     violations.Add(new Violation(
                         path,
@@ -216,6 +232,19 @@ internal static class StringRuleEvaluator
                         value));
                 }
                 break;
+        }
+    }
+
+    private static bool SafeIsMatch(Regex regex, string value)
+    {
+        try
+        {
+            return regex.IsMatch(value);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            // Treat timeout as "no match"; the caller records a generic format violation.
+            return false;
         }
     }
 }

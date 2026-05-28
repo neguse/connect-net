@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Buf.Validate;
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
@@ -21,11 +22,16 @@ internal sealed class FieldConstraintInfo
 
 internal sealed class ConstraintCache
 {
-    private readonly ConcurrentDictionary<string, FieldConstraintInfo[]> _cache = new();
+    // Keyed by the MessageDescriptor instance (via ConditionalWeakTable) so that:
+    //   * descriptors from different assemblies/versions that happen to share FullName
+    //     don't poison each other's FieldDescriptor entries
+    //   * entries are reclaimed when their descriptors are GCed, avoiding monotonic memory
+    //     growth for dynamically loaded protos.
+    private readonly ConditionalWeakTable<MessageDescriptor, FieldConstraintInfo[]> _cache = new();
 
     public FieldConstraintInfo[] GetFieldConstraints(MessageDescriptor descriptor)
     {
-        return _cache.GetOrAdd(descriptor.FullName, _ => BuildConstraints(descriptor));
+        return _cache.GetValue(descriptor, BuildConstraints);
     }
 
     private static FieldConstraintInfo[] BuildConstraints(MessageDescriptor descriptor)

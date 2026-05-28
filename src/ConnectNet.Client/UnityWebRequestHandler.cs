@@ -33,32 +33,39 @@ namespace ConnectNet.Client
                 contentType = request.Content.Headers.ContentType?.ToString();
             }
 
-            // Must run on Unity main thread
-            var tcs = new TaskCompletionSource<HttpResponseMessage>();
+            var tcs = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            // Use UnitySynchronizationContext to post to main thread
+            // Hook cancellation outside the executor so a cancel that arrives before the
+            // request is even posted still fails the awaiter instead of hanging forever.
+            using var ctRegistration = cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+
+            // Must run on Unity main thread.
             var syncContext = SynchronizationContext.Current;
             if (syncContext != null)
             {
-                syncContext.Post(_ => ExecuteRequest(url, method, body, contentType, request.Headers, tcs, cancellationToken), null);
+                syncContext.Post(_ =>
+                {
+                    // Fire-and-forget by design (must originate from the main thread). We never
+                    // throw out of this lambda — every path completes the tcs.
+                    _ = ExecuteRequestAsync(url, method, body, contentType, request.Headers, tcs, cancellationToken);
+                }, null);
             }
             else
             {
-                // If no sync context (e.g., called from background), execute directly
-                // This may fail in WebGL but works in Editor
-                ExecuteRequest(url, method, body, contentType, request.Headers, tcs, cancellationToken);
+                // No sync context (e.g., background thread in Editor). Best effort.
+                _ = ExecuteRequestAsync(url, method, body, contentType, request.Headers, tcs, cancellationToken);
             }
 
             return await tcs.Task.ConfigureAwait(false);
         }
 
-        private static async void ExecuteRequest(
+        private static async Task ExecuteRequestAsync(
             string url, string method, byte[]? body, string? contentType,
             HttpRequestHeaders requestHeaders,
             TaskCompletionSource<HttpResponseMessage> tcs,
             CancellationToken ct)
         {
-            UnityWebRequest uwr;
+            UnityWebRequest? uwr = null;
             try
             {
                 if (method == "GET")
@@ -75,7 +82,8 @@ namespace ConnectNet.Client
                     uwr.downloadHandler = new DownloadHandlerBuffer();
                 }
 
-                // Set headers
+                // Set headers. UnityWebRequest.SetRequestHeader throws on CR/LF in either name or
+                // value; we keep that behavior intact (defends against header smuggling on Unity).
                 foreach (var header in requestHeaders)
                 {
                     uwr.SetRequestHeader(header.Key, string.Join(",", header.Value));
@@ -85,29 +93,30 @@ namespace ConnectNet.Client
                     uwr.SetRequestHeader("Content-Type", contentType);
                 }
 
-                // Register cancellation
-                using var registration = ct.Register(() => uwr.Abort());
+                using var abortRegistration = ct.Register(static state => ((UnityWebRequest?)state)?.Abort(), uwr);
 
-                // Send and wait
                 var op = uwr.SendWebRequest();
                 while (!op.isDone)
                 {
+                    if (ct.IsCancellationRequested)
+                    {
+                        // Cancellation already aborted the request via the registration above;
+                        // bail out of the wait loop so we don't spin.
+                        break;
+                    }
                     await Task.Yield();
                 }
 
                 if (ct.IsCancellationRequested)
                 {
-                    uwr.Dispose();
                     tcs.TrySetCanceled(ct);
                     return;
                 }
 
-                // Build HttpResponseMessage
                 var response = new HttpResponseMessage((HttpStatusCode)uwr.responseCode);
                 var responseBody = uwr.downloadHandler?.data ?? Array.Empty<byte>();
                 response.Content = new ByteArrayContent(responseBody);
 
-                // Copy response headers
                 var responseHeaders = uwr.GetResponseHeaders();
                 if (responseHeaders != null)
                 {
@@ -119,7 +128,15 @@ namespace ConnectNet.Client
                         }
                         else if (kvp.Key.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase))
                         {
+                            // On WebGL the browser (and UnityWebRequest) silently decompress
+                            // gzip/br response bodies. Forwarding the original Content-Encoding
+                            // would cause the upper layer to try decompressing again — at best
+                            // an InvalidDataException, at worst a second-stage zip bomb. Strip it.
+#if UNITY_WEBGL && !UNITY_EDITOR
+                            // intentionally skipped
+#else
                             response.Content.Headers.TryAddWithoutValidation(kvp.Key, kvp.Value);
+#endif
                         }
                         else
                         {
@@ -128,12 +145,16 @@ namespace ConnectNet.Client
                     }
                 }
 
-                uwr.Dispose();
                 tcs.TrySetResult(response);
             }
             catch (Exception ex)
             {
                 tcs.TrySetException(ex);
+            }
+            finally
+            {
+                // Always dispose the native handle, even on cancel / exception paths.
+                uwr?.Dispose();
             }
         }
     }

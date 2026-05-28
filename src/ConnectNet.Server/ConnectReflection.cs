@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -12,10 +14,12 @@ namespace ConnectNet.Server;
 
 public class ConnectReflectionService
 {
-    private readonly List<string> _services = new();
+    // ConcurrentBag-style storage so AddService can be called during startup while
+    // request threads enumerate Services concurrently without corruption.
+    private readonly ConcurrentDictionary<string, byte> _services = new();
 
-    public void AddService(string serviceName) => _services.Add(serviceName);
-    public IReadOnlyList<string> Services => _services.AsReadOnly();
+    public void AddService(string serviceName) => _services[serviceName] = 1;
+    public IReadOnlyList<string> Services => _services.Keys.ToList().AsReadOnly();
 }
 
 public static class ConnectReflectionExtensions
@@ -111,22 +115,31 @@ public static class ConnectReflectionExtensions
 
     /// <summary>
     /// Check if the ServerReflectionRequest has list_services set (field 7, wire type 2).
+    /// Returns false on malformed input rather than throwing — this endpoint is best-effort
+    /// reflection and must not allow malformed protobuf to crash the server.
     /// </summary>
     private static bool ParseReflectionRequestForListServices(byte[] data)
     {
-        var offset = 0;
-        while (offset < data.Length)
+        try
         {
-            var tag = DecodeVarint(data, ref offset);
-            var fieldNumber = tag >> 3;
-            var wireType = tag & 0x7;
-
-            if (fieldNumber == 7 && wireType == 2)
+            var offset = 0;
+            while (offset < data.Length)
             {
-                return true;
-            }
+                var tag = DecodeVarint(data, ref offset);
+                var fieldNumber = tag >> 3;
+                var wireType = tag & 0x7;
 
-            SkipField(data, wireType, ref offset);
+                if (fieldNumber == 7 && wireType == 2)
+                {
+                    return true;
+                }
+
+                SkipField(data, wireType, ref offset);
+            }
+        }
+        catch (InvalidDataException)
+        {
+            // Malformed varint or length-prefixed field — reject the request gracefully.
         }
         return false;
     }
@@ -171,15 +184,22 @@ public static class ConnectReflectionExtensions
     {
         ulong result = 0;
         var shift = 0;
+        // protobuf varint is at most 10 bytes (64-bit value). Reject longer encodings to
+        // prevent a malicious payload from spinning DecodeVarint indefinitely.
+        var consumed = 0;
         while (offset < data.Length)
         {
+            if (consumed >= 10)
+                throw new InvalidDataException("varint too long");
             var b = data[offset++];
+            consumed++;
             result |= (ulong)(b & 0x7F) << shift;
             if ((b & 0x80) == 0)
-                break;
+                return result;
             shift += 7;
         }
-        return result;
+        // Ran out of input mid-varint
+        throw new InvalidDataException("truncated varint");
     }
 
     private static void EncodeVarint(MemoryStream ms, ulong value)
@@ -200,15 +220,23 @@ public static class ConnectReflectionExtensions
                 DecodeVarint(data, ref offset);
                 break;
             case 1:
+                if (offset + 8 > data.Length) throw new InvalidDataException("truncated fixed64");
                 offset += 8;
                 break;
             case 2:
-                var length = (int)DecodeVarint(data, ref offset);
+                var rawLength = DecodeVarint(data, ref offset);
+                if (rawLength > int.MaxValue) throw new InvalidDataException("length too large");
+                var length = (int)rawLength;
+                if (length < 0 || offset + length > data.Length)
+                    throw new InvalidDataException("length-delimited field out of range");
                 offset += length;
                 break;
             case 5:
+                if (offset + 4 > data.Length) throw new InvalidDataException("truncated fixed32");
                 offset += 4;
                 break;
+            default:
+                throw new InvalidDataException($"unknown wire type {wireType}");
         }
     }
 }

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using ConnectNet.Pooling;
 
 namespace ConnectNet.Server;
 
@@ -88,10 +89,17 @@ internal static class ConnectServerStreamHandler
         if (request.Headers.TryGetValue("Connect-Timeout-Ms", out var timeoutStr) &&
             long.TryParse(timeoutStr, out var timeoutMs) && timeoutMs > 0)
         {
+            // Cap the client-provided timeout to prevent timer-queue exhaustion via huge values.
+            var maxTimeout = httpContext.RequestServices.GetService<ConnectServerOptions>()?.MaxTimeoutMs ?? 0;
+            if (maxTimeout > 0 && timeoutMs > maxTimeout) timeoutMs = maxTimeout;
             timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
             timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
             ct = timeoutCts.Token;
         }
+
+        // Resolve the effective receive limit once; used both for envelope read and decompression.
+        var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
+        var receiveLimit = serverOptions?.EffectiveReceiveLimit ?? Envelope.DefaultMaxMessageBytes;
 
         try
         {
@@ -99,45 +107,52 @@ internal static class ConnectServerStreamHandler
             Google.Protobuf.IMessage requestMessage;
             try
             {
-                var envelope = await Envelope.ReadAsync(request.Body, ct);
-                if (envelope == null)
+                var frameNullable = await Envelope.ReadFrameAsync(request.BodyReader, receiveLimit, ct);
+                if (frameNullable == null)
                 {
                     throw new ConnectException(ConnectCode.Unimplemented, "empty request body");
                 }
 
-                var (flags, data) = envelope.Value;
-
-                // Decompress request envelope if compressed
-                if ((flags & Envelope.FlagCompressed) != 0)
+                ArrayPoolBufferWriter? decompressedWriter = null;
+                using (var frame = frameNullable.Value)
                 {
-                    if (string.IsNullOrEmpty(requestCompression) || requestCompression == "identity")
+                    try
                     {
-                        throw new ConnectException(ConnectCode.Internal, "received compressed message but compression is identity or not specified");
+                        var flags = frame.Flags;
+                        ReadOnlyMemory<byte> data = frame.Data;
+
+                        if ((flags & Envelope.FlagCompressed) != 0)
+                        {
+                            if (string.IsNullOrEmpty(requestCompression) || requestCompression == "identity")
+                            {
+                                throw new ConnectException(ConnectCode.Internal, "received compressed message but compression is identity or not specified");
+                            }
+                            var decompressor = compressorRegistry?.Get(requestCompression!);
+                            if (decompressor == null)
+                                throw new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {requestCompression}");
+                            decompressedWriter = new ArrayPoolBufferWriter();
+                            decompressor.Decompress(data, decompressedWriter, receiveLimit);
+                            data = decompressedWriter.WrittenMemory;
+                        }
+
+                        if (serverOptions != null && serverOptions.MessageReceiveLimit > 0 && data.Length > serverOptions.MessageReceiveLimit)
+                        {
+                            throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {data.Length} exceeds limit {serverOptions.MessageReceiveLimit}");
+                        }
+
+                        requestMessage = codec.Deserialize(data, method.RequestParser);
                     }
-                    var decompressor = compressorRegistry?.Get(requestCompression!);
-                    if (decompressor != null)
+                    finally
                     {
-                        data = decompressor.Decompress(data);
-                    }
-                    else
-                    {
-                        throw new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {requestCompression}");
+                        decompressedWriter?.Dispose();
                     }
                 }
-
-                // Enforce message size limit
-                var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
-                if (serverOptions != null && serverOptions.MessageReceiveLimit > 0 && data.Length > serverOptions.MessageReceiveLimit)
-                {
-                    throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {data.Length} exceeds limit {serverOptions.MessageReceiveLimit}");
-                }
-
-                requestMessage = codec.Deserialize(data, method.RequestParser);
 
                 // Check for unexpected additional envelopes (server stream expects exactly one request)
-                var extraEnvelope = await Envelope.ReadAsync(request.Body, ct);
-                if (extraEnvelope != null)
+                var extraFrame = await Envelope.ReadFrameAsync(request.BodyReader, receiveLimit, ct);
+                if (extraFrame != null)
                 {
+                    extraFrame.Value.Dispose();
                     throw new ConnectException(ConnectCode.Unimplemented, "server stream received multiple request messages");
                 }
             }
@@ -194,12 +209,12 @@ internal static class ConnectServerStreamHandler
                         headersFlushed = true;
                     }
 
-                    var msgBytes = codec.Serialize(msg);
+                    var msgBytes = codec.SerializeToArray(msg);
 
                     // Compress response envelope if client accepts
                     if (responseCompressor != null)
                     {
-                        msgBytes = responseCompressor.Compress(msgBytes);
+                        msgBytes = responseCompressor.CompressToArray(msgBytes);
                         await Envelope.WriteAsync(response.Body, Envelope.FlagCompressed, msgBytes, ct);
                     }
                     else

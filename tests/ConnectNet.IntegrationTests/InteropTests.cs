@@ -115,7 +115,7 @@ public class InteropTests
     [Fact]
     public async Task Interop_Unary_Proto()
     {
-        var channel = new ConnectChannel(_httpClient, _fixture.BaseUrl);
+        var channel = ConnectChannel.ForAddress(_fixture.BaseUrl, new() { HttpClient = _httpClient });
         var response = await channel.UnaryAsync<HelloRequest, HelloResponse>(
             "/example.GreeterService/SayHello",
             new HelloRequest { Name = "World" });
@@ -126,7 +126,7 @@ public class InteropTests
     [Fact]
     public async Task Interop_Unary_Json()
     {
-        var channel = new ConnectChannel(_httpClient, _fixture.BaseUrl, codec: new JsonCodec());
+        var channel = ConnectChannel.ForAddress(_fixture.BaseUrl, new() { HttpClient = _httpClient, Codec = new JsonCodec() });
         var response = await channel.UnaryAsync<HelloRequest, HelloResponse>(
             "/example.GreeterService/SayHello",
             new HelloRequest { Name = "JSON" });
@@ -137,7 +137,7 @@ public class InteropTests
     [Fact]
     public async Task Interop_Unary_Error()
     {
-        var channel = new ConnectChannel(_httpClient, _fixture.BaseUrl);
+        var channel = ConnectChannel.ForAddress(_fixture.BaseUrl, new() { HttpClient = _httpClient });
         var ex = await Assert.ThrowsAsync<ConnectException>(async () =>
         {
             await channel.UnaryAsync<HelloRequest, HelloResponse>(
@@ -151,7 +151,7 @@ public class InteropTests
     [Fact]
     public async Task Interop_ServerStream()
     {
-        var channel = new ConnectChannel(_httpClient, _fixture.BaseUrl);
+        var channel = ConnectChannel.ForAddress(_fixture.BaseUrl, new() { HttpClient = _httpClient });
         var messages = new List<string>();
 
         await foreach (var response in channel.ServerStreamAsync<HelloRequest, HelloResponse>(
@@ -170,7 +170,7 @@ public class InteropTests
     [Fact]
     public async Task Interop_Unary_GetRequest()
     {
-        var channel = new ConnectChannel(_httpClient, _fixture.BaseUrl);
+        var channel = ConnectChannel.ForAddress(_fixture.BaseUrl, new() { HttpClient = _httpClient });
         var response = await channel.UnaryAsync<HelloRequest, HelloResponse>(
             "/example.GreeterService/SayHello",
             new HelloRequest { Name = "GetTest" },
@@ -182,7 +182,7 @@ public class InteropTests
     [Fact]
     public async Task Interop_ClientStream()
     {
-        var channel = new ConnectChannel(_httpClient, _fixture.BaseUrl);
+        var channel = ConnectChannel.ForAddress(_fixture.BaseUrl, new() { HttpClient = _httpClient });
         using var call = channel.ClientStreamAsync<HelloRequest, HelloResponse>(
             "/example.GreeterService/CollectHellos");
 
@@ -197,7 +197,7 @@ public class InteropTests
     [Fact]
     public async Task Interop_BidiStream()
     {
-        var channel = new ConnectChannel(_httpClient, _fixture.BaseUrl);
+        var channel = ConnectChannel.ForAddress(_fixture.BaseUrl, new() { HttpClient = _httpClient });
         using var call = channel.BidiStreamAsync<HelloRequest, HelloResponse>(
             "/example.GreeterService/Chat");
 

@@ -28,7 +28,9 @@ public class CompressionTests
 
         var server = app.GetTestServer();
         var httpClient = server.CreateClient();
-        var channel = new ConnectChannel(httpClient, server.BaseAddress.ToString(), channelOptions: channelOptions);
+        channelOptions ??= new ConnectChannelOptions();
+        channelOptions.HttpClient = httpClient;
+        var channel = ConnectChannel.ForAddress(server.BaseAddress.ToString(), channelOptions);
         return (server, channel);
     }
 

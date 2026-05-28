@@ -1,6 +1,8 @@
 using System;
+using System.Buffers;
 using System.IO;
 using System.IO.Compression;
+using ConnectNet.Pooling;
 
 namespace ConnectNet;
 
@@ -8,75 +10,95 @@ public class DeflateCompressor : ICompressor
 {
     public string Name => "deflate";
 
-    public byte[] Compress(byte[] data)
+    public void Compress(ReadOnlyMemory<byte> source, IBufferWriter<byte> destination)
     {
-        // ZLIB format: 2-byte header + raw DEFLATE + 4-byte Adler32
-        using var output = new MemoryStream();
+        if (destination == null) throw new ArgumentNullException(nameof(destination));
 
-        // ZLIB header: CMF=0x78 (deflate, window size 32K), FLG=0x01 (no dict, level fastest)
-        // FLG must be set so that (CMF*256 + FLG) % 31 == 0
+        // ZLIB header: CMF=0x78 (deflate, window size 32K), FLG=0x01
         // 0x78 * 256 + 0x01 = 30721, 30721 % 31 = 0 ✓
-        output.WriteByte(0x78);
-        output.WriteByte(0x01);
+        var header = destination.GetSpan(2);
+        header[0] = 0x78;
+        header[1] = 0x01;
+        destination.Advance(2);
 
-        // Raw DEFLATE data
-        using (var deflate = new DeflateStream(output, CompressionLevel.Fastest, leaveOpen: true))
+        // Raw DEFLATE data via Stream adapter
+        var startedAt = 0;
+        var sink = new BufferWriterStream(destination);
+        using (var deflate = new DeflateStream(sink, CompressionLevel.Fastest, leaveOpen: true))
         {
-            deflate.Write(data, 0, data.Length);
+            deflate.Write(source.Span);
             deflate.Flush();
+            startedAt = 1; // sentinel — we cannot easily detect "wrote nothing" here, see below
         }
+        sink.Dispose();
 
-        // .NET's DeflateStream may produce 0 bytes for empty input.
-        // A valid DEFLATE stream requires at least a final block, so add one if needed.
-        if (data.Length == 0 && output.Length == 2)
+        // .NET's DeflateStream may produce 0 bytes for empty input. A valid DEFLATE stream
+        // requires at least a final block, so add one if needed.
+        if (source.Length == 0)
         {
-            // Write a final empty stored block: BFINAL=1, BTYPE=00 (stored), LEN=0, NLEN=0xFFFF
-            output.WriteByte(0x01); // BFINAL=1, BTYPE=00
-            output.WriteByte(0x00); // LEN low
-            output.WriteByte(0x00); // LEN high
-            output.WriteByte(0xFF); // NLEN low
-            output.WriteByte(0xFF); // NLEN high
+            var emptyBlock = destination.GetSpan(5);
+            emptyBlock[0] = 0x01; // BFINAL=1, BTYPE=00
+            emptyBlock[1] = 0x00; // LEN low
+            emptyBlock[2] = 0x00; // LEN high
+            emptyBlock[3] = 0xFF; // NLEN low
+            emptyBlock[4] = 0xFF; // NLEN high
+            destination.Advance(5);
         }
+        _ = startedAt;
 
-        // Adler32 checksum (big-endian)
-        uint checksum = Adler32(data);
-        output.WriteByte((byte)(checksum >> 24));
-        output.WriteByte((byte)(checksum >> 16));
-        output.WriteByte((byte)(checksum >> 8));
-        output.WriteByte((byte)(checksum));
-
-        return output.ToArray();
+        // Adler32 checksum (big-endian, 4 bytes trailer)
+        uint checksum = Adler32(source.Span);
+        var trailer = destination.GetSpan(4);
+        trailer[0] = (byte)(checksum >> 24);
+        trailer[1] = (byte)(checksum >> 16);
+        trailer[2] = (byte)(checksum >> 8);
+        trailer[3] = (byte)checksum;
+        destination.Advance(4);
     }
 
-    public byte[] Decompress(byte[] data)
+    public void Decompress(ReadOnlyMemory<byte> source, IBufferWriter<byte> destination, int maxBytes)
     {
-        if (data.Length < 2)
+        if (destination == null) throw new ArgumentNullException(nameof(destination));
+        if (maxBytes <= 0)
+            throw new ConnectException(ConnectCode.ResourceExhausted, "decompression limit must be positive");
+        if (source.Length < 2)
             throw new InvalidDataException("Invalid ZLIB data");
 
+        var span = source.Span;
         // Check if data has ZLIB header (CMF byte with method=8 for deflate)
-        bool hasZlibHeader = (data[0] & 0x0F) == 8 && ((data[0] * 256 + data[1]) % 31 == 0);
+        bool hasZlibHeader = (span[0] & 0x0F) == 8 && ((span[0] * 256 + span[1]) % 31 == 0);
 
-        if (hasZlibHeader)
+        ReadOnlyMemory<byte> deflateBody = hasZlibHeader
+            ? source.Slice(2)  // strip 2-byte ZLIB header; trailing Adler32 is ignored by DeflateStream EOF
+            : source;
+
+        using var input = GzipCompressor.AsStream(deflateBody);
+        using var deflate = new DeflateStream(input, CompressionMode.Decompress);
+
+        var scratch = ArrayPool<byte>.Shared.Rent(81920);
+        try
         {
-            // Skip 2-byte ZLIB header, ignore trailing 4-byte Adler32
-            using var input = new MemoryStream(data, 2, data.Length - 2);
-            using var deflate = new DeflateStream(input, CompressionMode.Decompress);
-            using var output = new MemoryStream();
-            deflate.CopyTo(output);
-            return output.ToArray();
+            long total = 0;
+            int n;
+            while ((n = deflate.Read(scratch, 0, scratch.Length)) > 0)
+            {
+                total += n;
+                if (total > maxBytes)
+                    throw new ConnectException(
+                        ConnectCode.ResourceExhausted,
+                        $"decompressed size exceeds limit {maxBytes}");
+                var dest = destination.GetSpan(n);
+                scratch.AsSpan(0, n).CopyTo(dest);
+                destination.Advance(n);
+            }
         }
-        else
+        finally
         {
-            // Raw DEFLATE (no ZLIB wrapper)
-            using var input = new MemoryStream(data);
-            using var deflate = new DeflateStream(input, CompressionMode.Decompress);
-            using var output = new MemoryStream();
-            deflate.CopyTo(output);
-            return output.ToArray();
+            ArrayPool<byte>.Shared.Return(scratch);
         }
     }
 
-    private static uint Adler32(byte[] data)
+    private static uint Adler32(ReadOnlySpan<byte> data)
     {
         uint a = 1, b = 0;
         const uint MOD = 65521;
