@@ -11,8 +11,9 @@ public class ConnectException : Exception
 {
     /// <summary>
     /// Maximum recursion depth accepted when parsing an error JSON returned by an untrusted peer.
+    /// Shared with end-stream JSON parsing in client streaming paths.
     /// </summary>
-    private const int MaxJsonDepth = 32;
+    internal const int MaxJsonDepth = 32;
 
     /// <summary>
     /// Maximum number of detail entries kept when parsing an error JSON. A malicious peer

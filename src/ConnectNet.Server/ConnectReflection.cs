@@ -227,7 +227,9 @@ public static class ConnectReflectionExtensions
                 var rawLength = DecodeVarint(data, ref offset);
                 if (rawLength > int.MaxValue) throw new InvalidDataException("length too large");
                 var length = (int)rawLength;
-                if (length < 0 || offset + length > data.Length)
+                // length is non-negative (rawLength fits in int). Compare against remaining
+                // buffer without computing offset+length, which would overflow for huge length.
+                if (length > data.Length - offset)
                     throw new InvalidDataException("length-delimited field out of range");
                 offset += length;
                 break;

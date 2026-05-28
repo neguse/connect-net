@@ -148,7 +148,7 @@ public static class ConnectHealthCheckExtensions
                     var rawLength = DecodeVarint(data, ref offset);
                     if (rawLength > int.MaxValue) return "";
                     var length = (int)rawLength;
-                    if (length < 0 || offset + length > data.Length) return "";
+                    if (length > data.Length - offset) return "";
                     return System.Text.Encoding.UTF8.GetString(data, offset, length);
                 }
 
@@ -224,7 +224,7 @@ public static class ConnectHealthCheckExtensions
                 var rawLength = DecodeVarint(data, ref offset);
                 if (rawLength > int.MaxValue) throw new InvalidDataException("length too large");
                 var length = (int)rawLength;
-                if (length < 0 || offset + length > data.Length)
+                if (length > data.Length - offset)
                     throw new InvalidDataException("length-delimited field out of range");
                 offset += length;
                 break;

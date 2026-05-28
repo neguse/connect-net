@@ -215,7 +215,8 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
                 if ((flags & Envelope.FlagEndStream) != 0)
                 {
                     var endStreamJson = Encoding.UTF8.GetString(data.Span);
-                    using var doc = JsonDocument.Parse(endStreamJson);
+                    var jsonOptions = new JsonDocumentOptions { MaxDepth = ConnectException.MaxJsonDepth };
+                    using var doc = JsonDocument.Parse(endStreamJson, jsonOptions);
                     var root = doc.RootElement;
 
                     if (_options != null && root.TryGetProperty("metadata", out var metadataElement))

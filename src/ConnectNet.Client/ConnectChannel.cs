@@ -173,6 +173,15 @@ public sealed class ConnectChannel : IDisposable
                 $"procedure '{procedure}' resolves to a different origin ({combined.Scheme}://{combined.Authority}) than the channel base ({baseUri.Scheme}://{baseUri.Authority})",
                 nameof(procedure));
         }
+        // Uri.Authority excludes userinfo, so a procedure like "https://user:pass@host/x"
+        // would otherwise slip through and carry credentials downstream. Reject any URI
+        // that surfaces non-empty userinfo on either side.
+        if (!string.IsNullOrEmpty(combined.UserInfo) || !string.IsNullOrEmpty(baseUri.UserInfo))
+        {
+            throw new ArgumentException(
+                $"procedure '{procedure}' or channel base contains userinfo, which is not allowed",
+                nameof(procedure));
+        }
         return combined;
     }
 
@@ -680,7 +689,8 @@ public sealed class ConnectChannel : IDisposable
                 if ((flags & Envelope.FlagEndStream) != 0)
                 {
                     var endStreamJson = Encoding.UTF8.GetString(data.Span);
-                    using var doc = JsonDocument.Parse(endStreamJson);
+                    var jsonOptions = new JsonDocumentOptions { MaxDepth = ConnectException.MaxJsonDepth };
+                    using var doc = JsonDocument.Parse(endStreamJson, jsonOptions);
                     var root = doc.RootElement;
 
                     if (options != null && root.TryGetProperty("metadata", out var metadataElement))
