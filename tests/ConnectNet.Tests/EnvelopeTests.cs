@@ -70,10 +70,10 @@ public class EnvelopeTests
     }
 
     [Fact]
-    public void EnvelopeHeader_BigEndian()
+    public async Task EnvelopeHeader_BigEndian()
     {
         var stream = new MemoryStream();
-        Envelope.WriteAsync(stream, 0x00, new byte[256]).Wait();
+        await Envelope.WriteAsync(stream, 0x00, new byte[256]);
         var bytes = stream.ToArray();
         Assert.Equal(0x00, bytes[0]); // flags
         Assert.Equal(0x00, bytes[1]); // length MSB

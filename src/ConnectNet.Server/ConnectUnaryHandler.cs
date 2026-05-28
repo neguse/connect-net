@@ -408,7 +408,7 @@ internal static class ConnectUnaryHandler
             response.ContentType = "application/json";
             await response.WriteAsync(ex.ToJson());
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             WriteContextHeaders(response, getContext);
             response.StatusCode = 500;

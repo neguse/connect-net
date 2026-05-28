@@ -101,7 +101,7 @@ public static class ConnectServiceExtensions
                             break;
                     }
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     if (!context.Response.HasStarted)
                     {

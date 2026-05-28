@@ -109,7 +109,9 @@ public class BidiStreamTests
             {
             }
             throw new ConnectException(ConnectCode.Internal, "bidi stream error");
-            yield break; // unreachable, required for async iterator
+#pragma warning disable CS0162 // Unreachable code — required for async iterator inference
+            yield break;
+#pragma warning restore CS0162
         }
     }
 
