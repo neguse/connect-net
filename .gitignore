@@ -3,3 +3,12 @@ obj/
 *.user
 *.suo
 .vs/
+
+# BenchmarkDotNet output (regenerated on every run)
+BenchmarkDotNet.Artifacts/
+
+# Reference repositories cloned locally for browsing other implementations
+/references/
+
+# Build artifact of the protoc plugin
+/tools/protoc-gen-connect-csharp/protoc-gen-connect-csharp
