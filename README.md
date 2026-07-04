@@ -346,12 +346,25 @@ app.MapConnectReflection();
 
 This exposes:
 - `GET /connect/v1/services` — JSON list of registered services
-- `POST /grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo` — a **non-standard,
-  simplified** reflection endpoint. The real gRPC/Connect reflection protocol is a
-  bidirectional stream of enveloped messages; this endpoint instead accepts one raw
-  `ServerReflectionRequest` body and returns one raw `ServerReflectionResponse`, supporting
-  only `list_services`. Standard reflection clients (grpcurl, `buf curl`) will not
-  interoperate with it; other request types receive an `error_response` with `UNIMPLEMENTED`.
+- `POST /grpc.reflection.v1.ServerReflection/ServerReflectionInfo` (plus the
+  `grpc.reflection.v1alpha` alias) — the standard **gRPC Server Reflection** protocol,
+  served as a bidirectional stream over the Connect protocol
+  (`application/connect+proto` / `application/connect+json`). `list_services`,
+  `file_containing_symbol`, and `file_by_filename` (including the transitive dependency
+  closure of each file) are supported; extension lookups (`file_containing_extension`,
+  `all_extension_numbers_of_type`) answer an `error_response` with `UNIMPLEMENTED`.
+
+Connect protocol reflection clients interoperate directly, e.g.:
+
+```sh
+buf curl --protocol connect --http2-prior-knowledge \
+  http://localhost:5000/example.GreeterService/SayHello \
+  -d '{"name": "World"}'
+```
+
+(`buf curl` uses server reflection by default when no `--schema` is given.) Clients that
+only speak native gRPC framing over the reflection endpoint — such as grpcurl's default
+mode — are not supported, since ConnectNet serves the Connect protocol, not gRPC framing.
 
 > **Security note** — `MapConnectReflection` and `MapConnectHealthCheck` expose service
 > inventory and liveness state with no built-in authentication. Treat them like internal

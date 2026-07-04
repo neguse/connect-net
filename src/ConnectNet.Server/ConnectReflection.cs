@@ -1,10 +1,14 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
+using Google.Protobuf;
+using Google.Protobuf.Reflection;
+using Grpc.Reflection.V1;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -12,29 +16,309 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ConnectNet.Server;
 
+/// <summary>
+/// Registry of services exposed through reflection. <see cref="ConnectServiceExtensions.MapConnectService{TService}"/>
+/// populates it automatically (including each service's <see cref="Google.Protobuf.Reflection.FileDescriptor"/>
+/// when the generated code provides one); additional entries can be added manually.
+/// </summary>
 public class ConnectReflectionService
 {
-    // ConcurrentBag-style storage so AddService can be called during startup while
+    // ConcurrentDictionary-based storage so AddService can be called during startup while
     // request threads enumerate Services concurrently without corruption.
-    private readonly ConcurrentDictionary<string, byte> _services = new();
+    private readonly ConcurrentDictionary<string, FileDescriptor?> _services = new();
+    private int _version;
+    private volatile IndexCache? _indexCache;
 
-    public void AddService(string serviceName) => _services[serviceName] = 1;
-    public IReadOnlyList<string> Services => _services.Keys.ToList().AsReadOnly();
+    public void AddService(string serviceName) => AddService(serviceName, null);
+
+    public void AddService(string serviceName, FileDescriptor? fileDescriptor)
+    {
+        _services[serviceName] = fileDescriptor;
+        Interlocked.Increment(ref _version);
+    }
+
+    public IReadOnlyList<string> Services
+        => _services.Keys.OrderBy(n => n, StringComparer.Ordinal).ToList().AsReadOnly();
+
+    /// <summary>
+    /// Returns the current lookup index, rebuilding it only when the registered service
+    /// set has changed since the last build.
+    /// </summary>
+    internal ReflectionIndex GetIndex()
+    {
+        var version = Volatile.Read(ref _version);
+        var cache = _indexCache;
+        if (cache != null && cache.Version == version)
+            return cache.Index;
+
+        var index = ReflectionIndex.Build(_services.Values);
+        _indexCache = new IndexCache(version, index);
+        return index;
+    }
+
+    private sealed class IndexCache
+    {
+        public IndexCache(int version, ReflectionIndex index)
+        {
+            Version = version;
+            Index = index;
+        }
+
+        public int Version { get; }
+        public ReflectionIndex Index { get; }
+    }
+}
+
+/// <summary>
+/// Immutable lookup tables built from the registered FileDescriptors: file name → descriptor
+/// and fully-qualified symbol → descriptor, both covering the transitive dependency closure.
+/// </summary>
+internal sealed class ReflectionIndex
+{
+    private readonly Dictionary<string, FileDescriptor> _filesByName;
+    private readonly Dictionary<string, FileDescriptor> _filesBySymbol;
+
+    private ReflectionIndex(
+        Dictionary<string, FileDescriptor> filesByName,
+        Dictionary<string, FileDescriptor> filesBySymbol)
+    {
+        _filesByName = filesByName;
+        _filesBySymbol = filesBySymbol;
+    }
+
+    public bool TryGetFileByName(string name, out FileDescriptor file)
+        => _filesByName.TryGetValue(name, out file!);
+
+    public bool TryGetFileBySymbol(string symbol, out FileDescriptor file)
+        => _filesBySymbol.TryGetValue(symbol, out file!);
+
+    public static ReflectionIndex Build(IEnumerable<FileDescriptor?> descriptors)
+    {
+        var filesByName = new Dictionary<string, FileDescriptor>(StringComparer.Ordinal);
+        var filesBySymbol = new Dictionary<string, FileDescriptor>(StringComparer.Ordinal);
+
+        foreach (var descriptor in descriptors)
+        {
+            if (descriptor != null)
+                AddFile(descriptor, filesByName, filesBySymbol);
+        }
+
+        return new ReflectionIndex(filesByName, filesBySymbol);
+    }
+
+    private static void AddFile(
+        FileDescriptor file,
+        Dictionary<string, FileDescriptor> filesByName,
+        Dictionary<string, FileDescriptor> filesBySymbol)
+    {
+        if (!filesByName.TryAdd(file.Name, file))
+            return; // already indexed (shared dependency)
+
+        foreach (var service in file.Services)
+        {
+            filesBySymbol.TryAdd(service.FullName, file);
+            foreach (var method in service.Methods)
+                filesBySymbol.TryAdd(method.FullName, file);
+        }
+
+        foreach (var message in file.MessageTypes)
+            AddMessage(message, file, filesBySymbol);
+
+        foreach (var enumType in file.EnumTypes)
+            AddEnum(enumType, file, filesBySymbol);
+
+        foreach (var dependency in file.Dependencies)
+            AddFile(dependency, filesByName, filesBySymbol);
+    }
+
+    private static void AddMessage(
+        MessageDescriptor message,
+        FileDescriptor file,
+        Dictionary<string, FileDescriptor> filesBySymbol)
+    {
+        filesBySymbol.TryAdd(message.FullName, file);
+
+        foreach (var field in message.Fields.InDeclarationOrder())
+            filesBySymbol.TryAdd(field.FullName, file);
+
+        foreach (var nested in message.NestedTypes)
+            AddMessage(nested, file, filesBySymbol);
+
+        foreach (var enumType in message.EnumTypes)
+            AddEnum(enumType, file, filesBySymbol);
+    }
+
+    private static void AddEnum(
+        EnumDescriptor enumType,
+        FileDescriptor file,
+        Dictionary<string, FileDescriptor> filesBySymbol)
+    {
+        filesBySymbol.TryAdd(enumType.FullName, file);
+
+        // Per protobuf scoping rules an enum value lives in the enum's *enclosing* scope
+        // ("pkg.VALUE" for a file-level enum, "pkg.Msg.VALUE" for a nested one).
+        var fullName = enumType.FullName;
+        var lastDot = fullName.LastIndexOf('.');
+        var scope = lastDot >= 0 ? fullName.Substring(0, lastDot + 1) : "";
+        foreach (var value in enumType.Values)
+            filesBySymbol.TryAdd(scope + value.Name, file);
+    }
+}
+
+/// <summary>
+/// Implementation of the standard gRPC Server Reflection protocol
+/// (<c>grpc.reflection.v1.ServerReflection/ServerReflectionInfo</c>, bidi streaming),
+/// served over the Connect protocol through the regular streaming pipeline.
+/// </summary>
+internal sealed class ConnectServerReflectionImpl
+{
+    // gRPC status codes carried in ErrorResponse.error_code.
+    private const int GrpcInvalidArgument = 3;
+    private const int GrpcNotFound = 5;
+    private const int GrpcInternal = 13;
+
+    private readonly ConnectReflectionService _registry;
+
+    public ConnectServerReflectionImpl(ConnectReflectionService registry) => _registry = registry;
+
+    public async IAsyncEnumerable<IMessage> ServerReflectionInfo(
+        IAsyncEnumerable<IMessage> requests,
+        ConnectContext context,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await foreach (var message in requests.WithCancellation(ct))
+        {
+            yield return Process((ServerReflectionRequest)message);
+        }
+    }
+
+    private ServerReflectionResponse Process(ServerReflectionRequest request)
+    {
+        var response = new ServerReflectionResponse
+        {
+            ValidHost = request.Host,
+            OriginalRequest = request
+        };
+
+        try
+        {
+            switch (request.MessageRequestCase)
+            {
+                case ServerReflectionRequest.MessageRequestOneofCase.ListServices:
+                    var list = new ListServiceResponse();
+                    foreach (var name in _registry.Services)
+                        list.Service.Add(new ServiceResponse { Name = name });
+                    response.ListServicesResponse = list;
+                    break;
+
+                case ServerReflectionRequest.MessageRequestOneofCase.FileByFilename:
+                    if (_registry.GetIndex().TryGetFileByName(request.FileByFilename, out var byName))
+                        response.FileDescriptorResponse = BuildFileDescriptorResponse(byName);
+                    else
+                        response.ErrorResponse = Error(GrpcNotFound, $"file not found: {request.FileByFilename}");
+                    break;
+
+                case ServerReflectionRequest.MessageRequestOneofCase.FileContainingSymbol:
+                    if (_registry.GetIndex().TryGetFileBySymbol(request.FileContainingSymbol, out var bySymbol))
+                        response.FileDescriptorResponse = BuildFileDescriptorResponse(bySymbol);
+                    else
+                        response.ErrorResponse = Error(GrpcNotFound, $"symbol not found: {request.FileContainingSymbol}");
+                    break;
+
+                case ServerReflectionRequest.MessageRequestOneofCase.FileContainingExtension:
+                case ServerReflectionRequest.MessageRequestOneofCase.AllExtensionNumbersOfType:
+                    response.ErrorResponse = Error(12 /* UNIMPLEMENTED */, "extension reflection is not supported");
+                    break;
+
+                default:
+                    response.ErrorResponse = Error(GrpcInvalidArgument, "message_request is not set");
+                    break;
+            }
+        }
+        catch (Exception)
+        {
+            // Reflection is best-effort: never let a malformed descriptor lookup take
+            // down the stream, report it as an in-band reflection error instead.
+            response.ErrorResponse = Error(GrpcInternal, "failed to process reflection request");
+        }
+
+        return response;
+    }
+
+    /// <summary>
+    /// Serializes the file plus its full transitive dependency closure (deduplicated) so
+    /// the client can rebuild a descriptor pool from the response alone.
+    /// </summary>
+    private static FileDescriptorResponse BuildFileDescriptorResponse(FileDescriptor root)
+    {
+        var response = new FileDescriptorResponse();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        AddWithDependencies(root);
+        return response;
+
+        void AddWithDependencies(FileDescriptor file)
+        {
+            if (!visited.Add(file.Name))
+                return;
+            response.FileDescriptorProto.Add(file.SerializedData);
+            foreach (var dependency in file.Dependencies)
+                AddWithDependencies(dependency);
+        }
+    }
+
+    private static ErrorResponse Error(int code, string message)
+        => new() { ErrorCode = code, ErrorMessage = message };
+}
+
+/// <summary>
+/// Connect service definition for <c>ServerReflectionInfo</c>. The same handler is exposed
+/// twice: as <c>grpc.reflection.v1.ServerReflection</c> and, for older clients, under the
+/// <c>grpc.reflection.v1alpha</c> route (the request/response messages are wire-compatible,
+/// so the v1alpha route reuses the v1 message types).
+/// </summary>
+internal sealed class ServerReflectionDefinition : IConnectServiceDefinition
+{
+    public static ServerReflectionDefinition V1 { get; } = new(
+        "grpc.reflection.v1.ServerReflection",
+        Grpc.Reflection.V1.ReflectionReflection.Descriptor);
+
+    public static ServerReflectionDefinition V1Alpha { get; } = new(
+        "grpc.reflection.v1alpha.ServerReflection",
+        Grpc.Reflection.V1Alpha.ReflectionReflection.Descriptor);
+
+    private ServerReflectionDefinition(string serviceName, FileDescriptor fileDescriptor)
+    {
+        ServiceName = serviceName;
+        FileDescriptor = fileDescriptor;
+        Methods = new[]
+        {
+            new ConnectMethodDescriptor(
+                $"/{serviceName}/ServerReflectionInfo",
+                ServerReflectionRequest.Parser,
+                methodType: ConnectMethodType.BidiStreaming,
+                bidiStreamHandler: (svc, requests, ctx)
+                    => ((ConnectServerReflectionImpl)svc).ServerReflectionInfo(requests, ctx))
+        };
+    }
+
+    public string ServiceName { get; }
+    public IReadOnlyList<ConnectMethodDescriptor> Methods { get; }
+    public FileDescriptor? FileDescriptor { get; }
 }
 
 public static class ConnectReflectionExtensions
 {
     /// <summary>
-    /// Maps two discovery endpoints:
+    /// Maps the service discovery endpoints:
     /// <list type="bullet">
     /// <item><c>GET /connect/v1/services</c> — a Connect-native JSON listing.</item>
-    /// <item><c>POST /grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo</c> —
-    /// a NON-STANDARD simplified endpoint. The real gRPC/Connect reflection service is a
-    /// bidirectional stream with enveloped messages; this implementation accepts a single
-    /// raw (unenveloped) <c>ServerReflectionRequest</c> body and returns a single raw
-    /// <c>ServerReflectionResponse</c>, supporting only <c>list_services</c>. Standard
-    /// reflection clients (grpcurl, buf curl) will NOT interoperate with it; other request
-    /// types receive an <c>error_response</c> with <c>UNIMPLEMENTED</c>.</item>
+    /// <item><c>POST /grpc.reflection.v1.ServerReflection/ServerReflectionInfo</c> (and the
+    /// <c>v1alpha</c> alias) — the standard gRPC Server Reflection protocol served over the
+    /// Connect streaming protocol (<c>application/connect+proto</c> / <c>application/connect+json</c>).
+    /// Supports <c>list_services</c>, <c>file_containing_symbol</c> and <c>file_by_filename</c>;
+    /// extension lookups answer <c>error_response</c> with <c>UNIMPLEMENTED</c>. Connect
+    /// protocol reflection clients (e.g. <c>buf curl --protocol connect --reflect</c>)
+    /// interoperate; clients that only speak native gRPC framing (grpcurl's default) do not.</item>
     /// </list>
     /// </summary>
     public static void MapConnectReflection(this IEndpointRouteBuilder builder)
@@ -48,243 +332,10 @@ public static class ConnectReflectionExtensions
                 JsonSerializer.Serialize(new { services = reflection.Services }));
         });
 
-        // Simplified reflection endpoint (list_services only; see MapConnectReflection docs)
-        builder.MapPost("/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo", async (HttpContext httpContext) =>
-        {
-            var request = httpContext.Request;
-            var response = httpContext.Response;
-
-            var contentType = request.ContentType ?? "";
-            var isJson = contentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase);
-
-            var reflection = httpContext.RequestServices.GetRequiredService<ConnectReflectionService>();
-
-            // Read request body with the configured receive limit
-            var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
-            var receiveLimit = serverOptions?.EffectiveReceiveLimit ?? Envelope.DefaultMaxMessageBytes;
-            var requestBytes = await ConnectServerProtocol.ReadBodyWithLimitAsync(request, receiveLimit, httpContext.RequestAborted);
-            if (requestBytes == null)
-            {
-                var error = new ConnectException(ConnectCode.ResourceExhausted, $"request body exceeds limit {receiveLimit}");
-                response.StatusCode = ConnectException.ToHttpStatus(error.Code);
-                response.ContentType = "application/json";
-                await response.WriteAsync(error.ToJson());
-                return;
-            }
-
-            if (isJson)
-            {
-                // Parse JSON request and check for list_services
-                var isListServices = false;
-                if (requestBytes.Length > 0)
-                {
-                    try
-                    {
-                        using var doc = JsonDocument.Parse(requestBytes);
-                        isListServices = doc.RootElement.TryGetProperty("list_services", out _);
-                    }
-                    catch { }
-                }
-
-                if (isListServices)
-                {
-                    response.StatusCode = 200;
-                    response.ContentType = "application/json";
-                    var services = new List<object>();
-                    foreach (var svc in reflection.Services)
-                    {
-                        services.Add(new { name = svc });
-                    }
-                    var responseObj = new
-                    {
-                        list_services_response = new { service = services }
-                    };
-                    await response.WriteAsync(JsonSerializer.Serialize(responseObj));
-                }
-                else
-                {
-                    response.StatusCode = 200;
-                    response.ContentType = "application/json";
-                    // error_code 12 = UNIMPLEMENTED
-                    await response.WriteAsync("{\"error_response\":{\"error_code\":12,\"error_message\":\"only list_services is supported\"}}");
-                }
-            }
-            else
-            {
-                // Protobuf: parse ServerReflectionRequest and handle list_services (field 7)
-                var isListServices = false;
-                if (requestBytes.Length > 0)
-                {
-                    isListServices = ParseReflectionRequestForListServices(requestBytes);
-                }
-
-                if (isListServices)
-                {
-                    response.StatusCode = 200;
-                    response.ContentType = "application/proto";
-                    var responseBytes = EncodeListServicesResponse(reflection.Services);
-                    await response.Body.WriteAsync(responseBytes);
-                }
-                else
-                {
-                    response.StatusCode = 200;
-                    response.ContentType = "application/proto";
-                    // Return error_response (UNIMPLEMENTED) instead of an empty body so
-                    // clients can distinguish "unsupported request" from "no services".
-                    await response.Body.WriteAsync(EncodeErrorResponse(12, "only list_services is supported"));
-                }
-            }
-        });
-    }
-
-    /// <summary>
-    /// Check if the ServerReflectionRequest has list_services set (field 7, wire type 2).
-    /// Returns false on malformed input rather than throwing — this endpoint is best-effort
-    /// reflection and must not allow malformed protobuf to crash the server.
-    /// </summary>
-    private static bool ParseReflectionRequestForListServices(byte[] data)
-    {
-        try
-        {
-            var offset = 0;
-            while (offset < data.Length)
-            {
-                var tag = DecodeVarint(data, ref offset);
-                var fieldNumber = tag >> 3;
-                var wireType = tag & 0x7;
-
-                if (fieldNumber == 7 && wireType == 2)
-                {
-                    return true;
-                }
-
-                SkipField(data, wireType, ref offset);
-            }
-        }
-        catch (InvalidDataException)
-        {
-            // Malformed varint or length-prefixed field — reject the request gracefully.
-        }
-        return false;
-    }
-
-    /// <summary>
-    /// Encode ServerReflectionResponse with list_services_response.
-    /// Response field 6 = ListServiceResponse, which has repeated ServiceResponse (field 1).
-    /// Each ServiceResponse has name (field 1, string).
-    /// </summary>
-    private static byte[] EncodeListServicesResponse(IReadOnlyList<string> services)
-    {
-        using var innerMs = new MemoryStream();
-
-        foreach (var svc in services)
-        {
-            // Encode ServiceResponse: field 1 (name), wire type 2
-            var nameBytes = System.Text.Encoding.UTF8.GetBytes(svc);
-            using var serviceMs = new MemoryStream();
-            serviceMs.WriteByte(0x0A); // field 1, wire type 2
-            EncodeVarint(serviceMs, (ulong)nameBytes.Length);
-            serviceMs.Write(nameBytes, 0, nameBytes.Length);
-            var serviceBytes = serviceMs.ToArray();
-
-            // Write as repeated field 1 in ListServiceResponse
-            innerMs.WriteByte(0x0A); // field 1, wire type 2
-            EncodeVarint(innerMs, (ulong)serviceBytes.Length);
-            innerMs.Write(serviceBytes, 0, serviceBytes.Length);
-        }
-
-        var listServiceResponseBytes = innerMs.ToArray();
-
-        // Wrap in ServerReflectionResponse field 6 (list_services_response)
-        using var outerMs = new MemoryStream();
-        outerMs.WriteByte(0x32); // field 6, wire type 2 = (6 << 3) | 2 = 50 = 0x32
-        EncodeVarint(outerMs, (ulong)listServiceResponseBytes.Length);
-        outerMs.Write(listServiceResponseBytes, 0, listServiceResponseBytes.Length);
-
-        return outerMs.ToArray();
-    }
-
-    /// <summary>
-    /// Encode ServerReflectionResponse with error_response (field 7).
-    /// ErrorResponse: error_code (field 1, varint), error_message (field 2, string).
-    /// </summary>
-    private static byte[] EncodeErrorResponse(int errorCode, string errorMessage)
-    {
-        using var innerMs = new MemoryStream();
-        innerMs.WriteByte(0x08); // field 1, wire type 0
-        EncodeVarint(innerMs, (ulong)errorCode);
-        var messageBytes = System.Text.Encoding.UTF8.GetBytes(errorMessage);
-        innerMs.WriteByte(0x12); // field 2, wire type 2
-        EncodeVarint(innerMs, (ulong)messageBytes.Length);
-        innerMs.Write(messageBytes, 0, messageBytes.Length);
-        var errorResponseBytes = innerMs.ToArray();
-
-        using var outerMs = new MemoryStream();
-        outerMs.WriteByte(0x3A); // field 7, wire type 2 = (7 << 3) | 2
-        EncodeVarint(outerMs, (ulong)errorResponseBytes.Length);
-        outerMs.Write(errorResponseBytes, 0, errorResponseBytes.Length);
-        return outerMs.ToArray();
-    }
-
-    private static ulong DecodeVarint(byte[] data, ref int offset)
-    {
-        ulong result = 0;
-        var shift = 0;
-        // protobuf varint is at most 10 bytes (64-bit value). Reject longer encodings to
-        // prevent a malicious payload from spinning DecodeVarint indefinitely.
-        var consumed = 0;
-        while (offset < data.Length)
-        {
-            if (consumed >= 10)
-                throw new InvalidDataException("varint too long");
-            var b = data[offset++];
-            consumed++;
-            result |= (ulong)(b & 0x7F) << shift;
-            if ((b & 0x80) == 0)
-                return result;
-            shift += 7;
-        }
-        // Ran out of input mid-varint
-        throw new InvalidDataException("truncated varint");
-    }
-
-    private static void EncodeVarint(MemoryStream ms, ulong value)
-    {
-        while (value > 0x7F)
-        {
-            ms.WriteByte((byte)(value | 0x80));
-            value >>= 7;
-        }
-        ms.WriteByte((byte)value);
-    }
-
-    private static void SkipField(byte[] data, ulong wireType, ref int offset)
-    {
-        switch (wireType)
-        {
-            case 0:
-                DecodeVarint(data, ref offset);
-                break;
-            case 1:
-                if (offset + 8 > data.Length) throw new InvalidDataException("truncated fixed64");
-                offset += 8;
-                break;
-            case 2:
-                var rawLength = DecodeVarint(data, ref offset);
-                if (rawLength > int.MaxValue) throw new InvalidDataException("length too large");
-                var length = (int)rawLength;
-                // length is non-negative (rawLength fits in int). Compare against remaining
-                // buffer without computing offset+length, which would overflow for huge length.
-                if (length > data.Length - offset)
-                    throw new InvalidDataException("length-delimited field out of range");
-                offset += length;
-                break;
-            case 5:
-                if (offset + 4 > data.Length) throw new InvalidDataException("truncated fixed32");
-                offset += 4;
-                break;
-            default:
-                throw new InvalidDataException($"unknown wire type {wireType}");
-        }
+        // Standard gRPC Server Reflection (bidi streaming) through the regular Connect
+        // pipeline, so content types, envelopes, compression and EndStream behave exactly
+        // like any other streaming RPC.
+        builder.MapConnectService<ConnectServerReflectionImpl>(ServerReflectionDefinition.V1);
+        builder.MapConnectService<ConnectServerReflectionImpl>(ServerReflectionDefinition.V1Alpha);
     }
 }

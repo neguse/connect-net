@@ -6,6 +6,12 @@
     <Description>ASP.NET Core server for Connect RPC: unary and streaming handlers, health checks, and service reflection.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.*" />
+    <PackageReference Include="Grpc.Tools" Version="2.*" PrivateAssets="All" />
+    <Protobuf Include="Proto/grpc/reflection/v1/reflection.proto" GrpcServices="None" AdditionalImportDirs="Proto" />
+    <Protobuf Include="Proto/grpc/reflection/v1alpha/reflection.proto" GrpcServices="None" AdditionalImportDirs="Proto" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../ConnectNet/ConnectNet.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>

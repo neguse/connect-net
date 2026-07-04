@@ -15,6 +15,7 @@ using ConnectNet.Client;
 using ConnectNet.Server;
 using ConnectNet.Tests.Proto;
 using Google.Protobuf;
+using Grpc.Reflection.V1;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
@@ -173,18 +174,27 @@ public class ServerHardeningTests
     }
 
     [Fact]
-    public async Task Reflection_BodyOverLimit_ReturnsResourceExhausted()
+    public async Task Reflection_MessageOverLimit_ReturnsResourceExhausted()
     {
+        // Reflection now runs through the standard bidi streaming pipeline, so the
+        // receive limit is enforced per envelope and reported via EndStream.
         using var server = CreateServer(o => o.MessageReceiveLimit = 16, mapReflection: true);
-        using var client = server.CreateClient();
+        using var client = new HttpClient(new Http2VersionHandler(server.CreateHandler()))
+        {
+            BaseAddress = server.BaseAddress
+        };
 
+        var body = await BuildEnvelopeBody(new byte[64]);
         using var httpRequest = BuildUnaryRequest(
-            "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo", new byte[64]);
+            "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo", body,
+            "application/connect+proto");
         var response = await client.SendAsync(httpRequest);
 
-        Assert.Equal((HttpStatusCode)429, response.StatusCode);
-        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal("resource_exhausted", doc.RootElement.GetProperty("code").GetString());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var (_, endStreamJson) = await ReadEnvelopes(response);
+        Assert.NotNull(endStreamJson);
+        using var doc = JsonDocument.Parse(endStreamJson!);
+        Assert.Equal("resource_exhausted", doc.RootElement.GetProperty("error").GetProperty("code").GetString());
     }
 
     // --- 4. GET route has the same catch-all as POST ---
@@ -514,32 +524,25 @@ public class ServerHardeningTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    // --- 18. Reflection: non-list_services proto request returns a proper error response ---
+    // --- 18. Reflection: raw (unenveloped) unary content types are rejected ---
 
     [Fact]
-    public async Task Reflection_NonListServicesProto_ReturnsErrorResponse()
+    public async Task Reflection_RawProtoContentType_Returns415()
     {
+        // The old non-standard endpoint accepted a raw application/proto body; the
+        // standard streaming implementation only speaks application/connect+* framing.
         using var server = CreateServer(mapReflection: true);
         using var client = server.CreateClient();
 
-        // ServerReflectionRequest { file_by_filename: "foo.proto" } => field 3, wire type 2
-        var name = Encoding.UTF8.GetBytes("foo.proto");
-        var body = new byte[2 + name.Length];
-        body[0] = 0x1A; // (3 << 3) | 2
-        body[1] = (byte)name.Length;
-        Array.Copy(name, 0, body, 2, name.Length);
-
         using var httpRequest = BuildUnaryRequest(
-            "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo", body);
+            "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
+            new ServerReflectionRequest { ListServices = "" }.ToByteArray());
         var response = await client.SendAsync(httpRequest);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var bytes = await response.Content.ReadAsByteArrayAsync();
-        Assert.NotEmpty(bytes);
-        // ServerReflectionResponse.error_response is field 7, wire type 2 => tag 0x3A
-        Assert.Equal(0x3A, bytes[0]);
-        // ErrorResponse.error_code (field 1, varint) must be UNIMPLEMENTED (12)
-        Assert.Contains((byte)0x0C, bytes);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, response.StatusCode);
+        Assert.True(response.Headers.Contains("Accept-Post"), "Accept-Post header expected on 415 response");
+        var acceptPost = string.Join(",", response.Headers.GetValues("Accept-Post"));
+        Assert.Contains("application/connect+proto", acceptPost);
     }
 
     // --- Test service ---

@@ -241,6 +241,7 @@ func generateService(g *protogen.GeneratedFile, file *protogen.File, service *pr
 	p("{")
 	p("    public static %sDefinition Instance { get; } = new();", serviceName)
 	p("    public string ServiceName => %sMethods.ServiceName;", serviceName)
+	p("    public Google.Protobuf.Reflection.FileDescriptor? FileDescriptor => %s.Descriptor;", reflectionClassName(file))
 	p("    public IReadOnlyList<ConnectMethodDescriptor> Methods { get; } = new ConnectMethodDescriptor[]")
 	p("    {")
 
@@ -340,6 +341,15 @@ func isNoSideEffects(method *protogen.Method) bool {
 	return ok && opts.GetIdempotencyLevel() == descriptorpb.MethodOptions_NO_SIDE_EFFECTS
 }
 
+// reflectionClassName returns the name of the C# descriptor umbrella class that
+// protoc's C# generator emits for a proto file: the PascalCased file basename with a
+// "Reflection" suffix (e.g. "greeter.proto" -> "GreeterReflection").
+func reflectionClassName(file *protogen.File) string {
+	base := filepath.Base(file.Desc.Path())
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	return pascalCase(base) + "Reflection"
+}
+
 // csharpMessageType returns the C# type name for a protobuf message.
 // Since the generated code lives in the same namespace as the proto-generated types,
 // we just use the simple name.
@@ -347,4 +357,3 @@ func csharpMessageType(message *protogen.Message) string {
 	// Use the Go name which matches the C# generated name for simple cases
 	return string(message.GoIdent.GoName)
 }
-

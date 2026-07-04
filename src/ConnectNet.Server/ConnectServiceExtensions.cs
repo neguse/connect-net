@@ -70,6 +70,7 @@ public static class ConnectServiceExtensions
         configure?.Invoke(options);
         services.AddSingleton(options);
         services.AddSingleton<ConnectReflectionService>();
+        services.TryAddSingleton<ConnectServerReflectionImpl>();
         services.TryAddSingleton<ConnectHealthService>();
 
         return services;
@@ -81,7 +82,7 @@ public static class ConnectServiceExtensions
         where TService : class
     {
         var reflection = builder.ServiceProvider.GetService<ConnectReflectionService>();
-        reflection?.AddService(definition.ServiceName);
+        reflection?.AddService(definition.ServiceName, definition.FileDescriptor);
 
         foreach (var method in definition.Methods)
         {

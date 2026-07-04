@@ -72,6 +72,7 @@ public class GreeterServiceDefinition : IConnectServiceDefinition
 {
     public static GreeterServiceDefinition Instance { get; } = new();
     public string ServiceName => GreeterServiceMethods.ServiceName;
+    public Google.Protobuf.Reflection.FileDescriptor? FileDescriptor => GreeterReflection.Descriptor;
     public IReadOnlyList<ConnectMethodDescriptor> Methods { get; } = new ConnectMethodDescriptor[]
     {
         new ConnectMethodDescriptor(
