@@ -3,6 +3,7 @@
     <TargetFramework>netstandard2.1</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
+    <Description>protovalidate-compatible message validation for Connect RPC services, driven by buf.validate constraints in .proto files.</Description>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ConnectNet.Tests" />

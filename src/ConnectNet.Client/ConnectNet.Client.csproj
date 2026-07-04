@@ -3,6 +3,7 @@
     <TargetFramework>netstandard2.1</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
+    <Description>Connect RPC client for .NET and Unity: unary, streaming, and bidi calls with interceptors, compression, and deadlines.</Description>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ConnectNet.Tests" />

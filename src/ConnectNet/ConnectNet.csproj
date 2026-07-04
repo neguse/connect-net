@@ -3,6 +3,7 @@
     <TargetFramework>netstandard2.1</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
+    <Description>Core protocol library for Connect RPC (connectrpc.com): envelope framing, codecs, compression, and the Connect error model.</Description>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" Version="3.*" />
