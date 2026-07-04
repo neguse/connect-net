@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CONFORMANCE_VERSION: v1.0.5
+  CONFORMANCE_SHA256: 7d4d1f36980debf900b12514c8d51107245e9195b3c581e61fa165fd95c94284
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Conformance references a local checkout of YetAnotherHttpHandler for HTTP/2.
+      # The repo tracks prebuilt native libraries, so a plain checkout is enough.
+      - uses: actions/checkout@v4
+        with:
+          repository: Cysharp/YetAnotherHttpHandler
+          ref: 7ff23a63df2edd521a6f93234a450fc919627a44
+          path: references/YetAnotherHttpHandler
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Build
+        run: dotnet build connect-net.slnx
+
+      - name: Unit tests
+        run: dotnet test tests/ConnectNet.Tests --no-build
+
+      - name: Go interop tests
+        run: dotnet test tests/ConnectNet.IntegrationTests --no-build
+
+      - name: Download connectconformance
+        run: |
+          curl -sL "https://github.com/connectrpc/conformance/releases/download/${CONFORMANCE_VERSION}/connectconformance-${CONFORMANCE_VERSION}-Linux-x86_64.tar.gz" -o /tmp/connectconformance.tar.gz
+          echo "${CONFORMANCE_SHA256}  /tmp/connectconformance.tar.gz" | sha256sum -c -
+          tar xzf /tmp/connectconformance.tar.gz -C /tmp
+
+      - name: Conformance (client)
+        run: |
+          /tmp/connectconformance --mode client --conf tests/ConnectNet.Conformance/config.yaml \
+            -- dotnet run --no-build --project tests/ConnectNet.Conformance -- --mode client
+
+      - name: Conformance (server)
+        run: |
+          /tmp/connectconformance --mode server --conf tests/ConnectNet.Conformance/config.yaml \
+            -- dotnet run --no-build --project tests/ConnectNet.Conformance -- --mode server
