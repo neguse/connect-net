@@ -40,6 +40,14 @@ jobs:
       - name: Go interop tests
         run: dotnet test tests/ConnectNet.IntegrationTests --no-build
 
+      # Local development copies the native library from a cargo build
+      # (native/target/release); CI has no Rust toolchain, so place the prebuilt
+      # library tracked in the YAHA repo next to the conformance binary instead.
+      - name: Provide YAHA native library
+        run: |
+          cp references/YetAnotherHttpHandler/src/YetAnotherHttpHandler/Plugins/Cysharp.Net.Http.YetAnotherHttpHandler.Native/runtimes/linux-x64/native/libCysharp.Net.Http.YetAnotherHttpHandler.Native.so \
+             tests/ConnectNet.Conformance/bin/Debug/net10.0/
+
       - name: Download connectconformance
         run: |
           curl -sL "https://github.com/connectrpc/conformance/releases/download/${CONFORMANCE_VERSION}/connectconformance-${CONFORMANCE_VERSION}-Linux-x86_64.tar.gz" -o /tmp/connectconformance.tar.gz
