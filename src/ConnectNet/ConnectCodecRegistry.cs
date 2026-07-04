@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace ConnectNet;
@@ -19,4 +20,7 @@ public class ConnectCodecRegistry
     public ICodec? Get(string name) => _codecs.TryGetValue(name, out var c) ? c : null;
 
     public ICodec Default => _default ?? _codecs.Values.First();
+
+    /// <summary>Names of all registered codecs, e.g. for advertising supported content types.</summary>
+    public IReadOnlyCollection<string> Names => _codecs.Keys.ToArray();
 }

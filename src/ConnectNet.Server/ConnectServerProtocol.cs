@@ -18,13 +18,6 @@ internal static class ConnectServerProtocol
     private const string StreamingPrefix = "application/connect+";
 
     /// <summary>
-    /// Codec names the built-in server registers. Used to advertise supported content
-    /// types (Accept-Post) because <see cref="ConnectCodecRegistry"/> does not expose
-    /// an enumeration of registered codecs.
-    /// </summary>
-    private static readonly string[] KnownCodecNames = { "proto", "json" };
-
-    /// <summary>
     /// Returns the media type portion of a Content-Type header (parameters such as
     /// <c>; charset=utf-8</c> stripped), trimmed.
     /// </summary>
@@ -84,8 +77,7 @@ internal static class ConnectServerProtocol
     internal static string BuildAcceptPost(ConnectCodecRegistry registry, ConnectMethodType methodType)
     {
         var prefix = methodType != ConnectMethodType.Unary ? StreamingPrefix : UnaryPrefix;
-        return string.Join(", ", KnownCodecNames
-            .Where(name => registry.Get(name) != null)
+        return string.Join(", ", registry.Names.OrderBy(name => name, StringComparer.Ordinal)
             .Select(name => prefix + name));
     }
 

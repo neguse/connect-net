@@ -53,9 +53,7 @@ internal sealed class ClientCallScope : IDisposable
             case OperationCanceledException:
                 return new ConnectException(ConnectCode.Canceled, "the call was canceled");
             case HttpRequestException:
-                // ConnectException has no InnerException-preserving constructor; keep the
-                // transport failure's message so the cause is not lost entirely.
-                return new ConnectException(ConnectCode.Unavailable, $"transport error: {ex.Message}");
+                return new ConnectException(ConnectCode.Unavailable, $"transport error: {ex.Message}", ex);
             default:
                 return ex;
         }

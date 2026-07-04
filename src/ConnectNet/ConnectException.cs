@@ -37,6 +37,13 @@ public class ConnectException : Exception
         Details = details?.ToList().AsReadOnly() ?? (IReadOnlyList<ConnectErrorDetail>)Array.Empty<ConnectErrorDetail>();
     }
 
+    public ConnectException(ConnectCode code, string? message, Exception? innerException, IEnumerable<ConnectErrorDetail>? details = null)
+        : base(message ?? code.ToString(), innerException)
+    {
+        Code = code;
+        Details = details?.ToList().AsReadOnly() ?? (IReadOnlyList<ConnectErrorDetail>)Array.Empty<ConnectErrorDetail>();
+    }
+
     public string ToJson()
     {
         using var stream = new MemoryStream();
