@@ -116,7 +116,8 @@ public class ConformanceServiceDefinition : IConnectServiceDefinition
         new ConnectMethodDescriptor(
             ConformanceServiceMethods.IdempotentUnary,
             IdempotentUnaryRequest.Parser,
-            handler: async (svc, req, ctx) => (IMessage)await ((ConformanceServiceBase)svc).IdempotentUnary((IdempotentUnaryRequest)req, ctx))
+            handler: async (svc, req, ctx) => (IMessage)await ((ConformanceServiceBase)svc).IdempotentUnary((IdempotentUnaryRequest)req, ctx),
+            isNoSideEffects: true)
     };
 
     private static async IAsyncEnumerable<IMessage> ConvertStream<T>(IAsyncEnumerable<T> source, [EnumeratorCancellation] CancellationToken ct = default) where T : IMessage

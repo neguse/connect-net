@@ -22,10 +22,12 @@ internal static class ConnectUnaryHandler
     {
         var request = httpContext.Request;
         var response = httpContext.Response;
+        var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
 
-        // Validate Content-Type first (415 takes priority per HTTP spec)
+        // Validate Content-Type first (415 takes priority per HTTP spec).
+        // Strict match: "application/protobuf" must not pass for codec "proto".
         var contentType = request.ContentType;
-        if (contentType == null || !contentType.StartsWith($"application/{codec.Name}", StringComparison.OrdinalIgnoreCase))
+        if (!ConnectServerProtocol.MatchesContentType(contentType, $"application/{codec.Name}"))
         {
             response.StatusCode = 415;
             response.ContentType = "application/json";
@@ -34,8 +36,8 @@ internal static class ConnectUnaryHandler
             return;
         }
 
-        // Validate Connect-Protocol-Version
-        if (!request.Headers.TryGetValue("Connect-Protocol-Version", out var version) || version != "1")
+        // Validate Connect-Protocol-Version (only when required by options)
+        if (!ConnectServerProtocol.ProtocolVersionSatisfied(request, serverOptions))
         {
             response.StatusCode = 400;
             response.ContentType = "application/json";
@@ -47,22 +49,10 @@ internal static class ConnectUnaryHandler
         // Resolve compressor registry from DI (optional)
         var compressorRegistry = httpContext.RequestServices.GetService<ConnectCompressorRegistry>();
 
-        // Parse Connect-Timeout-Ms header
-        CancellationTokenSource? timeoutCts = null;
+        // Parse Connect-Timeout-Ms header (clamped to a safe upper bound)
         var ct = httpContext.RequestAborted;
-        var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
         var receiveLimit = serverOptions?.EffectiveReceiveLimit ?? Envelope.DefaultMaxMessageBytes;
-
-        if (request.Headers.TryGetValue("Connect-Timeout-Ms", out var timeoutStr) &&
-            long.TryParse(timeoutStr, out var timeoutMs) && timeoutMs > 0)
-        {
-            // Cap the client-provided timeout to prevent timer-queue exhaustion via huge values.
-            var maxTimeout = serverOptions?.MaxTimeoutMs ?? 0;
-            if (maxTimeout > 0 && timeoutMs > maxTimeout) timeoutMs = maxTimeout;
-            timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
-            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
-            ct = timeoutCts.Token;
-        }
+        var timeoutCts = ConnectServerProtocol.StartTimeout(httpContext, serverOptions, ref ct);
 
         // Create context with request headers
         var requestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -91,6 +81,8 @@ internal static class ConnectUnaryHandler
                     var decompressor = compressorRegistry?.Get(encodingName!);
                     if (decompressor == null)
                     {
+                        // Advertise the encodings we do support (RFC 7694).
+                        response.Headers["Accept-Encoding"] = ConnectServerProtocol.SupportedEncodings(compressorRegistry);
                         throw new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {encodingName}");
                     }
                     decompressedWriter = new ArrayPoolBufferWriter();
@@ -104,7 +96,7 @@ internal static class ConnectUnaryHandler
                 throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {requestBytes.Length} exceeds limit {serverOptions.MessageReceiveLimit}");
             }
 
-            var requestMessage = codec.Deserialize(requestBytes, method.RequestParser);
+            var requestMessage = DeserializeRequest(codec, requestBytes, method.RequestParser);
 
             // Invoke service method (with interceptor chain if configured)
             IMessage responseMessage;
@@ -152,16 +144,12 @@ internal static class ConnectUnaryHandler
             codec.Serialize(responseMessage, msgWriter);
 
             ICompressor? selectedCompressor = null;
-            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding) && compressorRegistry != null)
+            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding))
             {
-                foreach (var name in compressorRegistry.SupportedNames)
+                selectedCompressor = ConnectServerProtocol.NegotiateCompression(acceptEncoding, compressorRegistry);
+                if (selectedCompressor != null)
                 {
-                    if (acceptEncoding.Any(v => v != null && v.Contains(name, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        selectedCompressor = compressorRegistry.Get(name);
-                        response.Headers["Content-Encoding"] = name;
-                        break;
-                    }
+                    response.Headers["Content-Encoding"] = selectedCompressor.Name;
                 }
             }
 
@@ -176,37 +164,77 @@ internal static class ConnectUnaryHandler
                 await response.Body.WriteAsync(msgWriter.WrittenMemory, ct);
             }
         }
+        catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
+        {
+            // Client disconnected: classify as Canceled, not DeadlineExceeded. No response
+            // can be delivered; abort whatever remains of the connection.
+            httpContext.Abort();
+        }
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)
         {
-            WriteContextHeaders(response, context);
-            response.StatusCode = 504;
-            response.ContentType = "application/json";
-            var error = new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded");
-            await response.WriteAsync(error.ToJson());
+            await WriteUnaryErrorAsync(httpContext, context,
+                new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded"));
         }
         catch (ConnectException ex)
         {
-            WriteContextHeaders(response, context);
-            response.StatusCode = ConnectException.ToHttpStatus(ex.Code);
-            response.ContentType = "application/json";
-            await response.WriteAsync(ex.ToJson());
+            await WriteUnaryErrorAsync(httpContext, context, ex);
         }
         catch (Exception)
         {
-            WriteContextHeaders(response, context);
-            if (!response.HasStarted)
-            {
-                response.StatusCode = 500;
-                response.ContentType = "application/json";
-            }
-            var error = new ConnectException(ConnectCode.Internal, "internal error");
-            await response.WriteAsync(error.ToJson());
+            await WriteUnaryErrorAsync(httpContext, context,
+                new ConnectException(ConnectCode.Internal, "internal error"));
         }
         finally
         {
             timeoutCts?.Dispose();
             rawWriter?.Dispose();
             decompressedWriter?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Writes a unary error response. If the response has already started we cannot
+    /// change the status code or emit a JSON body, so the connection is aborted instead
+    /// of appending error JSON to a partially-written payload. Any Content-Encoding
+    /// header selected for the (never written) success payload is removed because error
+    /// bodies are always uncompressed JSON.
+    /// </summary>
+    private static async Task WriteUnaryErrorAsync(HttpContext httpContext, ConnectContext context, ConnectException error)
+    {
+        var response = httpContext.Response;
+        if (response.HasStarted)
+        {
+            httpContext.Abort();
+            return;
+        }
+        WriteContextHeaders(response, context);
+        response.Headers.Remove("Content-Encoding");
+        response.StatusCode = ConnectException.ToHttpStatus(error.Code);
+        response.ContentType = "application/json";
+        await response.WriteAsync(error.ToJson());
+    }
+
+    /// <summary>
+    /// Deserializes the request payload, mapping malformed input (protobuf wire errors,
+    /// invalid JSON) to InvalidArgument — matching connect-go — instead of Internal.
+    /// </summary>
+    private static IMessage DeserializeRequest(ICodec codec, ReadOnlyMemory<byte> data, MessageParser parser)
+    {
+        try
+        {
+            return codec.Deserialize(data, parser);
+        }
+        catch (InvalidProtocolBufferException ex)
+        {
+            throw new ConnectException(ConnectCode.InvalidArgument, $"invalid request message: {ex.Message}");
+        }
+        catch (InvalidJsonException ex) // note: derives from IOException, not InvalidProtocolBufferException
+        {
+            throw new ConnectException(ConnectCode.InvalidArgument, $"invalid request message: {ex.Message}");
+        }
+        catch (FormatException ex)
+        {
+            throw new ConnectException(ConnectCode.InvalidArgument, $"invalid request message: {ex.Message}");
         }
     }
 
@@ -239,8 +267,9 @@ internal static class ConnectUnaryHandler
             return;
         }
 
-        // Parse message query parameter
-        if (!request.Query.TryGetValue("message", out var messageParam) || string.IsNullOrEmpty(messageParam))
+        // Parse message query parameter. An empty value is valid: it represents a
+        // zero-byte message (e.g. google.protobuf.Empty).
+        if (!request.Query.TryGetValue("message", out var messageParam))
         {
             response.StatusCode = 400;
             response.ContentType = "application/json";
@@ -252,22 +281,11 @@ internal static class ConnectUnaryHandler
         // Resolve compressor registry from DI (optional)
         var compressorRegistry = httpContext.RequestServices.GetService<ConnectCompressorRegistry>();
 
-        // Parse Connect-Timeout-Ms header
-        CancellationTokenSource? timeoutCts = null;
+        // Parse Connect-Timeout-Ms header (clamped to a safe upper bound)
         var ct = httpContext.RequestAborted;
         var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
         var receiveLimit = serverOptions?.EffectiveReceiveLimit ?? Envelope.DefaultMaxMessageBytes;
-
-        if (request.Headers.TryGetValue("Connect-Timeout-Ms", out var timeoutStr) &&
-            long.TryParse(timeoutStr, out var timeoutMs) && timeoutMs > 0)
-        {
-            // Cap the client-provided timeout to prevent timer-queue exhaustion via huge values.
-            var maxTimeout = serverOptions?.MaxTimeoutMs ?? 0;
-            if (maxTimeout > 0 && timeoutMs > maxTimeout) timeoutMs = maxTimeout;
-            timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
-            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
-            ct = timeoutCts.Token;
-        }
+        var timeoutCts = ConnectServerProtocol.StartTimeout(httpContext, serverOptions, ref ct);
 
         // Create context with request headers
         var getRequestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -304,15 +322,18 @@ internal static class ConnectUnaryHandler
                 requestBytes = System.Text.Encoding.UTF8.GetBytes(messageParam!);
             }
 
-            // Decompress if compression query parameter is set
+            // Decompress if compression query parameter is set. Unknown compression is an
+            // error (same as the POST path), not something to silently ignore.
             if (request.Query.TryGetValue("compression", out var compressionName) &&
-                !string.IsNullOrEmpty(compressionName))
+                !string.IsNullOrEmpty(compressionName) && compressionName != "identity")
             {
                 var decompressor = compressorRegistry?.Get(compressionName!);
-                if (decompressor != null)
+                if (decompressor == null)
                 {
-                    requestBytes = decompressor.DecompressToArray(requestBytes, receiveLimit);
+                    response.Headers["Accept-Encoding"] = ConnectServerProtocol.SupportedEncodings(compressorRegistry);
+                    throw new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {compressionName}");
                 }
+                requestBytes = decompressor.DecompressToArray(requestBytes, receiveLimit);
             }
 
             // Enforce message size limit
@@ -321,7 +342,7 @@ internal static class ConnectUnaryHandler
                 throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {requestBytes.Length} exceeds limit {serverOptions.MessageReceiveLimit}");
             }
 
-            var requestMessage = codec.Deserialize(requestBytes, method.RequestParser);
+            var requestMessage = DeserializeRequest(codec, requestBytes, method.RequestParser);
 
             // Invoke service method (with interceptor chain if configured)
             IMessage responseMessage;
@@ -369,16 +390,12 @@ internal static class ConnectUnaryHandler
             codec.Serialize(responseMessage, msgWriter);
 
             ICompressor? selectedCompressor = null;
-            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding) && compressorRegistry != null)
+            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding))
             {
-                foreach (var name in compressorRegistry.SupportedNames)
+                selectedCompressor = ConnectServerProtocol.NegotiateCompression(acceptEncoding, compressorRegistry);
+                if (selectedCompressor != null)
                 {
-                    if (acceptEncoding.Any(v => v != null && v.Contains(name, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        selectedCompressor = compressorRegistry.Get(name);
-                        response.Headers["Content-Encoding"] = name;
-                        break;
-                    }
+                    response.Headers["Content-Encoding"] = selectedCompressor.Name;
                 }
             }
 
@@ -393,28 +410,24 @@ internal static class ConnectUnaryHandler
                 await response.Body.WriteAsync(msgWriter.WrittenMemory, ct);
             }
         }
+        catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
+        {
+            // Client disconnected: classify as Canceled, not DeadlineExceeded.
+            httpContext.Abort();
+        }
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)
         {
-            WriteContextHeaders(response, getContext);
-            response.StatusCode = 504;
-            response.ContentType = "application/json";
-            var error = new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded");
-            await response.WriteAsync(error.ToJson());
+            await WriteUnaryErrorAsync(httpContext, getContext,
+                new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded"));
         }
         catch (ConnectException ex)
         {
-            WriteContextHeaders(response, getContext);
-            response.StatusCode = ConnectException.ToHttpStatus(ex.Code);
-            response.ContentType = "application/json";
-            await response.WriteAsync(ex.ToJson());
+            await WriteUnaryErrorAsync(httpContext, getContext, ex);
         }
         catch (Exception)
         {
-            WriteContextHeaders(response, getContext);
-            response.StatusCode = 500;
-            response.ContentType = "application/json";
-            var error = new ConnectException(ConnectCode.Internal, "internal error");
-            await response.WriteAsync(error.ToJson());
+            await WriteUnaryErrorAsync(httpContext, getContext,
+                new ConnectException(ConnectCode.Internal, "internal error"));
         }
         finally
         {

@@ -32,7 +32,12 @@ public class BidiStreamTests
         app.Start();
 
         var server = app.GetTestServer();
-        var httpClient = server.CreateClient();
+        // Bidi streaming requires HTTP/2; TestServer requests default to HTTP/1.1,
+        // so upgrade the request version at the message-handler level.
+        var httpClient = new HttpClient(new ServerHardeningTests.Http2VersionHandler(server.CreateHandler()))
+        {
+            BaseAddress = server.BaseAddress
+        };
         var channel = ConnectChannel.ForAddress(server.BaseAddress.ToString(), new() { HttpClient = httpClient });
         return (server, channel);
     }

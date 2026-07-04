@@ -35,6 +35,21 @@ public class ConnectHealthService
         => string.IsNullOrEmpty(service)
             ? _overallStatus
             : _statuses.TryGetValue(service, out var s) ? s : HealthStatus.ServiceUnknown;
+
+    /// <summary>
+    /// Looks up the status for a service. Returns false when the service has never been
+    /// registered — per the gRPC Health protocol, Check must then fail with NotFound
+    /// (SERVICE_UNKNOWN is reserved for the Watch streaming variant).
+    /// </summary>
+    public bool TryGetStatus(string service, out HealthStatus status)
+    {
+        if (string.IsNullOrEmpty(service))
+        {
+            status = _overallStatus;
+            return true;
+        }
+        return _statuses.TryGetValue(service, out status);
+    }
 }
 
 public static class ConnectHealthCheckExtensions
@@ -47,54 +62,67 @@ public static class ConnectHealthCheckExtensions
         {
             var request = httpContext.Request;
             var response = httpContext.Response;
+            var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
 
-            // Validate Connect-Protocol-Version
-            if (!request.Headers.TryGetValue("Connect-Protocol-Version", out var version) || version != "1")
+            // Validate Connect-Protocol-Version (only when required by options)
+            if (!ConnectServerProtocol.ProtocolVersionSatisfied(request, serverOptions))
             {
-                response.StatusCode = 400;
-                response.ContentType = "application/json";
-                await response.WriteAsync("{\"code\":\"invalid_argument\",\"message\":\"missing or invalid Connect-Protocol-Version header\"}");
+                await WriteErrorAsync(response,
+                    new ConnectException(ConnectCode.InvalidArgument, "missing or invalid Connect-Protocol-Version header"),
+                    overrideStatus: 400);
                 return;
             }
 
-            var contentType = request.ContentType ?? "";
-            var isJson = contentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase);
-            var isProto = contentType.StartsWith("application/proto", StringComparison.OrdinalIgnoreCase);
+            var contentType = request.ContentType;
+            var isJson = ConnectServerProtocol.MatchesContentType(contentType, "application/json");
+            var isProto = ConnectServerProtocol.MatchesContentType(contentType, "application/proto");
 
             if (!isJson && !isProto)
             {
-                response.StatusCode = 415;
-                response.ContentType = "application/json";
-                await response.WriteAsync($"{{\"code\":\"invalid_argument\",\"message\":\"unsupported content type: {contentType}\"}}");
+                // Serialize through ConnectException.ToJson so a hostile Content-Type value
+                // cannot inject content into the JSON error body.
+                await WriteErrorAsync(response,
+                    new ConnectException(ConnectCode.InvalidArgument, $"unsupported content type: {contentType}"),
+                    overrideStatus: 415);
                 return;
             }
 
             var healthService = httpContext.RequestServices.GetRequiredService<ConnectHealthService>();
 
-            // Read request body
-            using var ms = new MemoryStream();
-            await request.Body.CopyToAsync(ms);
-            var requestBytes = ms.ToArray();
-
-            string serviceName;
-
-            if (isJson)
+            // Read request body with the configured receive limit
+            var receiveLimit = serverOptions?.EffectiveReceiveLimit ?? Envelope.DefaultMaxMessageBytes;
+            var requestBytes = await ConnectServerProtocol.ReadBodyWithLimitAsync(request, receiveLimit, httpContext.RequestAborted);
+            if (requestBytes == null)
             {
-                serviceName = ParseJsonRequest(requestBytes);
-            }
-            else
-            {
-                serviceName = ParseProtobufRequest(requestBytes);
+                await WriteErrorAsync(response,
+                    new ConnectException(ConnectCode.ResourceExhausted, $"request body exceeds limit {receiveLimit}"));
+                return;
             }
 
-            var status = healthService.GetStatus(serviceName);
+            var serviceName = isJson ? ParseJsonRequest(requestBytes) : ParseProtobufRequest(requestBytes);
+
+            // Per the gRPC Health protocol, Check responds NOT_FOUND for services that
+            // were never registered; SERVICE_UNKNOWN is only used by Watch.
+            if (!healthService.TryGetStatus(serviceName, out var status))
+            {
+                await WriteErrorAsync(response,
+                    new ConnectException(ConnectCode.NotFound, $"unknown service: {serviceName}"));
+                return;
+            }
 
             if (isJson)
             {
                 response.StatusCode = 200;
                 response.ContentType = "application/json";
                 var statusName = StatusNames[(int)status];
-                await response.WriteAsync($"{{\"status\":\"{statusName}\"}}");
+                using var stream = new MemoryStream();
+                using (var writer = new Utf8JsonWriter(stream))
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("status", statusName);
+                    writer.WriteEndObject();
+                }
+                await response.Body.WriteAsync(stream.ToArray());
             }
             else
             {
@@ -104,6 +132,13 @@ public static class ConnectHealthCheckExtensions
                 await response.Body.WriteAsync(responseBytes);
             }
         });
+    }
+
+    private static async Task WriteErrorAsync(HttpResponse response, ConnectException error, int? overrideStatus = null)
+    {
+        response.StatusCode = overrideStatus ?? ConnectException.ToHttpStatus(error.Code);
+        response.ContentType = "application/json";
+        await response.WriteAsync(error.ToJson());
     }
 
     private static string ParseJsonRequest(byte[] data)

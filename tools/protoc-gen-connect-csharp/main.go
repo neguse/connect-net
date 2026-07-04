@@ -259,8 +259,16 @@ func generateService(g *protogen.GeneratedFile, file *protogen.File, service *pr
 			p("        new ConnectMethodDescriptor(")
 			p("            %sMethods.%s,", serviceName, methodName)
 			p("            %s.Parser,", inputType)
-			p("            handler: async (svc, req, ctx) => (IMessage)await ((%sBase)svc).%s((%s)req, ctx))%s",
-				serviceName, methodName, inputType, comma)
+			if isNoSideEffects(method) {
+				// idempotency_level = NO_SIDE_EFFECTS: the server additionally exposes
+				// this method over HTTP GET.
+				p("            handler: async (svc, req, ctx) => (IMessage)await ((%sBase)svc).%s((%s)req, ctx),",
+					serviceName, methodName, inputType)
+				p("            isNoSideEffects: true)%s", comma)
+			} else {
+				p("            handler: async (svc, req, ctx) => (IMessage)await ((%sBase)svc).%s((%s)req, ctx))%s",
+					serviceName, methodName, inputType, comma)
+			}
 		case !method.Desc.IsStreamingClient() && method.Desc.IsStreamingServer():
 			// Server streaming
 			p("        new ConnectMethodDescriptor(")
@@ -323,6 +331,13 @@ func generateService(g *protogen.GeneratedFile, file *protogen.File, service *pr
 	}
 
 	p("}")
+}
+
+// isNoSideEffects reports whether the method is declared side-effect free via
+// `option idempotency_level = NO_SIDE_EFFECTS;`.
+func isNoSideEffects(method *protogen.Method) bool {
+	opts, ok := method.Desc.Options().(*descriptorpb.MethodOptions)
+	return ok && opts.GetIdempotencyLevel() == descriptorpb.MethodOptions_NO_SIDE_EFFECTS
 }
 
 // csharpMessageType returns the C# type name for a protobuf message.

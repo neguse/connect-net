@@ -24,6 +24,19 @@ public class ConnectReflectionService
 
 public static class ConnectReflectionExtensions
 {
+    /// <summary>
+    /// Maps two discovery endpoints:
+    /// <list type="bullet">
+    /// <item><c>GET /connect/v1/services</c> — a Connect-native JSON listing.</item>
+    /// <item><c>POST /grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo</c> —
+    /// a NON-STANDARD simplified endpoint. The real gRPC/Connect reflection service is a
+    /// bidirectional stream with enveloped messages; this implementation accepts a single
+    /// raw (unenveloped) <c>ServerReflectionRequest</c> body and returns a single raw
+    /// <c>ServerReflectionResponse</c>, supporting only <c>list_services</c>. Standard
+    /// reflection clients (grpcurl, buf curl) will NOT interoperate with it; other request
+    /// types receive an <c>error_response</c> with <c>UNIMPLEMENTED</c>.</item>
+    /// </list>
+    /// </summary>
     public static void MapConnectReflection(this IEndpointRouteBuilder builder)
     {
         // Connect-native JSON endpoint for easy service discovery
@@ -35,7 +48,7 @@ public static class ConnectReflectionExtensions
                 JsonSerializer.Serialize(new { services = reflection.Services }));
         });
 
-        // Standard gRPC reflection endpoint (list_services only)
+        // Simplified reflection endpoint (list_services only; see MapConnectReflection docs)
         builder.MapPost("/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo", async (HttpContext httpContext) =>
         {
             var request = httpContext.Request;
@@ -46,9 +59,18 @@ public static class ConnectReflectionExtensions
 
             var reflection = httpContext.RequestServices.GetRequiredService<ConnectReflectionService>();
 
-            using var ms = new MemoryStream();
-            await request.Body.CopyToAsync(ms);
-            var requestBytes = ms.ToArray();
+            // Read request body with the configured receive limit
+            var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
+            var receiveLimit = serverOptions?.EffectiveReceiveLimit ?? Envelope.DefaultMaxMessageBytes;
+            var requestBytes = await ConnectServerProtocol.ReadBodyWithLimitAsync(request, receiveLimit, httpContext.RequestAborted);
+            if (requestBytes == null)
+            {
+                var error = new ConnectException(ConnectCode.ResourceExhausted, $"request body exceeds limit {receiveLimit}");
+                response.StatusCode = ConnectException.ToHttpStatus(error.Code);
+                response.ContentType = "application/json";
+                await response.WriteAsync(error.ToJson());
+                return;
+            }
 
             if (isJson)
             {
@@ -83,7 +105,8 @@ public static class ConnectReflectionExtensions
                 {
                     response.StatusCode = 200;
                     response.ContentType = "application/json";
-                    await response.WriteAsync("{\"error_response\":{\"error_code\":5,\"error_message\":\"only list_services is supported\"}}");
+                    // error_code 12 = UNIMPLEMENTED
+                    await response.WriteAsync("{\"error_response\":{\"error_code\":12,\"error_message\":\"only list_services is supported\"}}");
                 }
             }
             else
@@ -106,8 +129,9 @@ public static class ConnectReflectionExtensions
                 {
                     response.StatusCode = 200;
                     response.ContentType = "application/proto";
-                    // Return error_response (not implemented for other request types)
-                    await response.Body.WriteAsync(Array.Empty<byte>());
+                    // Return error_response (UNIMPLEMENTED) instead of an empty body so
+                    // clients can distinguish "unsupported request" from "no services".
+                    await response.Body.WriteAsync(EncodeErrorResponse(12, "only list_services is supported"));
                 }
             }
         });
@@ -177,6 +201,28 @@ public static class ConnectReflectionExtensions
         EncodeVarint(outerMs, (ulong)listServiceResponseBytes.Length);
         outerMs.Write(listServiceResponseBytes, 0, listServiceResponseBytes.Length);
 
+        return outerMs.ToArray();
+    }
+
+    /// <summary>
+    /// Encode ServerReflectionResponse with error_response (field 7).
+    /// ErrorResponse: error_code (field 1, varint), error_message (field 2, string).
+    /// </summary>
+    private static byte[] EncodeErrorResponse(int errorCode, string errorMessage)
+    {
+        using var innerMs = new MemoryStream();
+        innerMs.WriteByte(0x08); // field 1, wire type 0
+        EncodeVarint(innerMs, (ulong)errorCode);
+        var messageBytes = System.Text.Encoding.UTF8.GetBytes(errorMessage);
+        innerMs.WriteByte(0x12); // field 2, wire type 2
+        EncodeVarint(innerMs, (ulong)messageBytes.Length);
+        innerMs.Write(messageBytes, 0, messageBytes.Length);
+        var errorResponseBytes = innerMs.ToArray();
+
+        using var outerMs = new MemoryStream();
+        outerMs.WriteByte(0x3A); // field 7, wire type 2 = (7 << 3) | 2
+        EncodeVarint(outerMs, (ulong)errorResponseBytes.Length);
+        outerMs.Write(errorResponseBytes, 0, errorResponseBytes.Length);
         return outerMs.ToArray();
     }
 

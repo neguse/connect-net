@@ -77,7 +77,8 @@ public class GreeterServiceDefinition : IConnectServiceDefinition
         new ConnectMethodDescriptor(
             GreeterServiceMethods.SayHello,
             HelloRequest.Parser,
-            handler: async (svc, req, ctx) => (IMessage)await ((GreeterServiceBase)svc).SayHello((HelloRequest)req, ctx)),
+            handler: async (svc, req, ctx) => (IMessage)await ((GreeterServiceBase)svc).SayHello((HelloRequest)req, ctx),
+            isNoSideEffects: true),
         new ConnectMethodDescriptor(
             GreeterServiceMethods.SayHelloStream,
             HelloRequest.Parser,

@@ -312,7 +312,10 @@ var response = await client.SayHelloAsync(
     new CallOptions { UseGet = true });
 ```
 
-The server automatically registers GET endpoints for all unary methods. The request is encoded in query parameters (`?encoding=proto&message=...&base64=1&connect=v1`).
+The server registers GET endpoints only for unary methods declared side-effect free in the
+proto (`option idempotency_level = NO_SIDE_EFFECTS;`), mirroring connect-go. Exposing
+arbitrary unary methods over GET would make state-changing RPCs vulnerable to CSRF. The
+request is encoded in query parameters (`?encoding=proto&message=...&base64=1&connect=v1`).
 
 ### Health Checks
 
@@ -341,7 +344,12 @@ app.MapConnectReflection();
 
 This exposes:
 - `GET /connect/v1/services` — JSON list of registered services
-- `POST /grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo` — gRPC reflection (list_services)
+- `POST /grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo` — a **non-standard,
+  simplified** reflection endpoint. The real gRPC/Connect reflection protocol is a
+  bidirectional stream of enveloped messages; this endpoint instead accepts one raw
+  `ServerReflectionRequest` body and returns one raw `ServerReflectionResponse`, supporting
+  only `list_services`. Standard reflection clients (grpcurl, `buf curl`) will not
+  interoperate with it; other request types receive an `error_response` with `UNIMPLEMENTED`.
 
 > **Security note** — `MapConnectReflection` and `MapConnectHealthCheck` expose service
 > inventory and liveness state with no built-in authentication. Treat them like internal

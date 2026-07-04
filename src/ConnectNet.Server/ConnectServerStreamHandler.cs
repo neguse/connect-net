@@ -22,10 +22,11 @@ internal static class ConnectServerStreamHandler
     {
         var request = httpContext.Request;
         var response = httpContext.Response;
+        var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
 
         // Validate Content-Type first (415 takes priority per HTTP spec)
         var contentType = request.ContentType;
-        if (contentType == null || !contentType.StartsWith($"application/connect+{codec.Name}", StringComparison.OrdinalIgnoreCase))
+        if (!ConnectServerProtocol.MatchesContentType(contentType, $"application/connect+{codec.Name}"))
         {
             response.StatusCode = 415;
             response.ContentType = "application/json";
@@ -34,8 +35,8 @@ internal static class ConnectServerStreamHandler
             return;
         }
 
-        // Validate Connect-Protocol-Version
-        if (!request.Headers.TryGetValue("Connect-Protocol-Version", out var version) || version != "1")
+        // Validate Connect-Protocol-Version (only when required by options)
+        if (!ConnectServerProtocol.ProtocolVersionSatisfied(request, serverOptions))
         {
             response.StatusCode = 400;
             response.ContentType = "application/json";
@@ -58,6 +59,7 @@ internal static class ConnectServerStreamHandler
             {
                 response.StatusCode = 200;
                 response.ContentType = $"application/connect+{codec.Name}";
+                response.Headers["Connect-Accept-Encoding"] = ConnectServerProtocol.SupportedEncodings(compressorRegistry);
                 var errContext = new ConnectContext();
                 var errEndStream = BuildEndStreamJson(
                     new ConnectException(ConnectCode.Unimplemented, $"unknown compression: {requestCompression}"), errContext);
@@ -68,37 +70,15 @@ internal static class ConnectServerStreamHandler
             }
         }
 
-        // Find a response compressor that the client accepts
-        ICompressor? responseCompressor = null;
-        if (request.Headers.TryGetValue("Connect-Accept-Encoding", out var acceptEncodingValues) && compressorRegistry != null)
-        {
-            foreach (var name in compressorRegistry.SupportedNames)
-            {
-                if (acceptEncodingValues.Any(v => v != null && v.Contains(name, StringComparison.OrdinalIgnoreCase)))
-                {
-                    responseCompressor = compressorRegistry.Get(name);
-                    break;
-                }
-            }
-        }
+        // Find a response compressor that the client accepts (q=0 entries excluded)
+        request.Headers.TryGetValue("Connect-Accept-Encoding", out var acceptEncodingValues);
+        var responseCompressor = ConnectServerProtocol.NegotiateCompression(acceptEncodingValues, compressorRegistry);
 
-        // Parse Connect-Timeout-Ms header
-        CancellationTokenSource? timeoutCts = null;
+        // Parse Connect-Timeout-Ms header (clamped to a safe upper bound)
         var ct = httpContext.RequestAborted;
-
-        if (request.Headers.TryGetValue("Connect-Timeout-Ms", out var timeoutStr) &&
-            long.TryParse(timeoutStr, out var timeoutMs) && timeoutMs > 0)
-        {
-            // Cap the client-provided timeout to prevent timer-queue exhaustion via huge values.
-            var maxTimeout = httpContext.RequestServices.GetService<ConnectServerOptions>()?.MaxTimeoutMs ?? 0;
-            if (maxTimeout > 0 && timeoutMs > maxTimeout) timeoutMs = maxTimeout;
-            timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
-            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
-            ct = timeoutCts.Token;
-        }
+        var timeoutCts = ConnectServerProtocol.StartTimeout(httpContext, serverOptions, ref ct);
 
         // Resolve the effective receive limit once; used both for envelope read and decompression.
-        var serverOptions = httpContext.RequestServices.GetService<ConnectServerOptions>();
         var receiveLimit = serverOptions?.EffectiveReceiveLimit ?? Envelope.DefaultMaxMessageBytes;
 
         try
@@ -140,7 +120,24 @@ internal static class ConnectServerStreamHandler
                             throw new ConnectException(ConnectCode.ResourceExhausted, $"message size {data.Length} exceeds limit {serverOptions.MessageReceiveLimit}");
                         }
 
-                        requestMessage = codec.Deserialize(data, method.RequestParser);
+                        try
+                        {
+                            requestMessage = codec.Deserialize(data, method.RequestParser);
+                        }
+                        catch (Google.Protobuf.InvalidProtocolBufferException ex)
+                        {
+                            // Malformed payloads are the client's fault: InvalidArgument,
+                            // delivered as an EndStream error envelope (HTTP 200) below.
+                            throw new ConnectException(ConnectCode.InvalidArgument, $"invalid request message: {ex.Message}");
+                        }
+                        catch (Google.Protobuf.InvalidJsonException ex)
+                        {
+                            throw new ConnectException(ConnectCode.InvalidArgument, $"invalid request message: {ex.Message}");
+                        }
+                        catch (FormatException ex)
+                        {
+                            throw new ConnectException(ConnectCode.InvalidArgument, $"invalid request message: {ex.Message}");
+                        }
                     }
                     finally
                     {
@@ -236,6 +233,11 @@ internal static class ConnectServerStreamHandler
             {
                 streamError = ex;
             }
+            catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
+            {
+                // Client disconnected: classify as Canceled, not DeadlineExceeded.
+                streamError = new ConnectException(ConnectCode.Canceled, "client disconnected");
+            }
             catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)
             {
                 streamError = new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded");
@@ -243,6 +245,12 @@ internal static class ConnectServerStreamHandler
             catch (Exception)
             {
                 streamError = new ConnectException(ConnectCode.Internal, "internal error");
+            }
+
+            // The client is gone — no EndStream envelope can be delivered.
+            if (httpContext.RequestAborted.IsCancellationRequested)
+            {
+                return;
             }
 
             // Write response headers on error path if not already sent
@@ -259,13 +267,20 @@ internal static class ConnectServerStreamHandler
             await Envelope.WriteAsync(response.Body, Envelope.FlagEndStream, Encoding.UTF8.GetBytes(endStreamJson), httpContext.RequestAborted);
             await response.Body.FlushAsync(httpContext.RequestAborted);
         }
+        catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
+        {
+            // Client disconnected (Canceled); nothing can be written.
+        }
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true)
         {
             // Timeout before streaming started
-            response.StatusCode = 504;
-            response.ContentType = "application/json";
-            var error = new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded");
-            await response.WriteAsync(error.ToJson());
+            if (!response.HasStarted)
+            {
+                response.StatusCode = 504;
+                response.ContentType = "application/json";
+                var error = new ConnectException(ConnectCode.DeadlineExceeded, "deadline exceeded");
+                await response.WriteAsync(error.ToJson());
+            }
         }
         finally
         {

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace ConnectNet.Server;
 
@@ -35,6 +36,13 @@ public class ConnectServerOptions
     /// </summary>
     public long StreamIdleTimeoutMs { get; set; } = 0;
 
+    /// <summary>
+    /// When true, requests must carry a valid <c>Connect-Protocol-Version: 1</c> header
+    /// and are rejected with InvalidArgument otherwise. Defaults to false, matching
+    /// connect-go's opt-in <c>WithRequireConnectProtocolHeader</c> behavior.
+    /// </summary>
+    public bool RequireConnectProtocolHeader { get; set; } = false;
+
     internal int EffectiveReceiveLimit
         => MessageReceiveLimit == 0
             ? int.MaxValue
@@ -62,6 +70,7 @@ public static class ConnectServiceExtensions
         configure?.Invoke(options);
         services.AddSingleton(options);
         services.AddSingleton<ConnectReflectionService>();
+        services.TryAddSingleton<ConnectHealthService>();
 
         return services;
     }
@@ -80,9 +89,18 @@ public static class ConnectServiceExtensions
             {
                 try
                 {
-                    var service = context.RequestServices.GetRequiredService<TService>();
                     var registry = context.RequestServices.GetRequiredService<ConnectCodecRegistry>();
-                    var codec = ResolveCodecFromContentType(context.Request.ContentType, registry, method.MethodType);
+
+                    // Strict content-type resolution: unknown codecs or wrong framing are
+                    // rejected with 415 instead of silently falling back to the default codec.
+                    var codec = ConnectServerProtocol.ResolveCodec(context.Request.ContentType, registry, method.MethodType);
+                    if (codec == null)
+                    {
+                        await WriteUnsupportedMediaTypeAsync(context, registry, method.MethodType);
+                        return;
+                    }
+
+                    var service = context.RequestServices.GetRequiredService<TService>();
 
                     switch (method.MethodType)
                     {
@@ -114,53 +132,45 @@ public static class ConnectServiceExtensions
                 }
             });
 
-            // Register GET route for unary methods (idempotent/safe RPCs)
-            if (method.MethodType == ConnectMethodType.Unary)
+            // Register a GET route only for unary methods explicitly marked side-effect
+            // free (idempotency_level = NO_SIDE_EFFECTS). Exposing every unary method over
+            // GET would allow CSRF against state-changing RPCs.
+            if (method.MethodType == ConnectMethodType.Unary && method.IsNoSideEffects)
             {
                 builder.MapGet(method.Procedure, async (HttpContext context) =>
                 {
-                    var service = context.RequestServices.GetRequiredService<TService>();
-                    var registry = context.RequestServices.GetRequiredService<ConnectCodecRegistry>();
-                    var codec = ResolveCodecFromEncoding(context.Request.Query, registry);
-                    await ConnectUnaryHandler.HandleGetAsync(context, method, service, codec);
+                    try
+                    {
+                        var service = context.RequestServices.GetRequiredService<TService>();
+                        var registry = context.RequestServices.GetRequiredService<ConnectCodecRegistry>();
+                        var codec = ResolveCodecFromEncoding(context.Request.Query, registry);
+                        await ConnectUnaryHandler.HandleGetAsync(context, method, service, codec);
+                    }
+                    catch (Exception)
+                    {
+                        if (!context.Response.HasStarted)
+                        {
+                            context.Response.StatusCode = 500;
+                            context.Response.ContentType = "application/json";
+                            var error = new ConnectException(ConnectCode.Internal, "internal error");
+                            await context.Response.WriteAsync(error.ToJson());
+                        }
+                    }
                 });
             }
         }
     }
 
-    /// <summary>
-    /// Resolves the correct codec based on the Content-Type header.
-    /// For unary: application/proto, application/json
-    /// For streaming: application/connect+proto, application/connect+json
-    /// Falls back to the default codec (proto) if content type is unrecognized.
-    /// </summary>
-    private static ICodec ResolveCodecFromContentType(string? contentType, ConnectCodecRegistry registry, ConnectMethodType methodType)
+    private static async System.Threading.Tasks.Task WriteUnsupportedMediaTypeAsync(
+        HttpContext context, ConnectCodecRegistry registry, ConnectMethodType methodType)
     {
-        if (contentType == null)
-            return registry.Default;
-
-        // Streaming content types: application/connect+{codec}
-        if (contentType.StartsWith("application/connect+", StringComparison.OrdinalIgnoreCase))
-        {
-            var codecName = contentType.Substring("application/connect+".Length);
-            // Remove any parameters (e.g., ;charset=utf-8)
-            var semiIndex = codecName.IndexOf(';');
-            if (semiIndex >= 0)
-                codecName = codecName.Substring(0, semiIndex);
-            return registry.Get(codecName.Trim()) ?? registry.Default;
-        }
-
-        // Unary content types: application/{codec}
-        if (contentType.StartsWith("application/", StringComparison.OrdinalIgnoreCase))
-        {
-            var codecName = contentType.Substring("application/".Length);
-            var semiIndex = codecName.IndexOf(';');
-            if (semiIndex >= 0)
-                codecName = codecName.Substring(0, semiIndex);
-            return registry.Get(codecName.Trim()) ?? registry.Default;
-        }
-
-        return registry.Default;
+        var response = context.Response;
+        response.StatusCode = 415;
+        response.Headers["Accept-Post"] = ConnectServerProtocol.BuildAcceptPost(registry, methodType);
+        response.ContentType = "application/json";
+        var error = new ConnectException(ConnectCode.Unknown,
+            $"unsupported content type: {context.Request.ContentType}");
+        await response.WriteAsync(error.ToJson());
     }
 
     /// <summary>

@@ -121,7 +121,8 @@ public class GetUnaryTests
                 "/example.GreeterService/SayHello",
                 HelloRequest.Parser,
                 async (service, req, ctx) => (IMessage)await ((GetGreeterService)service)
-                    .SayHello((HelloRequest)req, ctx))
+                    .SayHello((HelloRequest)req, ctx),
+                isNoSideEffects: true)
         };
     }
 }

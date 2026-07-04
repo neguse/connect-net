@@ -103,10 +103,12 @@ public class HealthCheckTests
 
             var response = await client.SendAsync(httpRequest);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var bytes = await response.Content.ReadAsByteArrayAsync();
-            // HealthCheckResponse with status=SERVICE_UNKNOWN(3): tag 0x08, varint 3
-            Assert.Equal(new byte[] { 0x08, 0x03 }, bytes);
+            // Per the gRPC Health protocol, Check must fail with NOT_FOUND for unknown
+            // services (SERVICE_UNKNOWN is reserved for Watch).
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(body);
+            Assert.Equal("not_found", doc.RootElement.GetProperty("code").GetString());
         }
     }
 

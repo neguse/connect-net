@@ -21,7 +21,9 @@ public class UnaryHandlerTests
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddConnectServices();
+        // These tests predate optional protocol-version validation; keep them running
+        // against the strict configuration.
+        builder.Services.AddConnectServices(o => o.RequireConnectProtocolHeader = true);
         builder.Services.AddSingleton<TestGreeterService>();
         var app = builder.Build();
         app.MapConnectService<TestGreeterService>(GreeterServiceDefinition.Instance);

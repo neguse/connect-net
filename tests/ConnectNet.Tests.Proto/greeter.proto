@@ -11,7 +11,9 @@ message HelloResponse {
 }
 
 service GreeterService {
-  rpc SayHello (HelloRequest) returns (HelloResponse);
+  rpc SayHello (HelloRequest) returns (HelloResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
   rpc SayHelloStream (HelloRequest) returns (stream HelloResponse);
   rpc CollectHellos (stream HelloRequest) returns (HelloResponse);
   rpc Chat (stream HelloRequest) returns (stream HelloResponse);
