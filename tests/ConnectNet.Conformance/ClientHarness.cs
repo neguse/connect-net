@@ -143,14 +143,11 @@ internal static class ClientHarness
         var method = request.HasMethod ? request.Method : GetDefaultMethod(request.StreamType);
         var procedure = $"/{service}/{method}";
 
-        // Set up cancellation
+        // Set up cancellation. Timeout enforcement is left entirely to the client library
+        // (CallOptions.Timeout): a backup timer here would race the library's deadline and
+        // turn deadline_exceeded results into canceled.
         using var cts = new CancellationTokenSource();
         CancellationTokenSource? timeoutCts = null;
-        if (request.HasTimeoutMs)
-        {
-            timeoutCts = new CancellationTokenSource();
-            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(request.TimeoutMs));
-        }
         var cancelSpec = request.Cancel;
 
         try

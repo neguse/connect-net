@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Threading;
 
@@ -14,20 +15,25 @@ namespace ConnectNet.Client;
 /// </summary>
 internal sealed class ClientCallScope : IDisposable
 {
-    private readonly CancellationTokenSource? _timeoutCts;
-    private readonly CancellationToken _userToken;
+    private readonly CancellationTokenSource? _timerCts;
+    private readonly CancellationTokenSource? _linkedCts;
+    private readonly long _deadlineTimestamp;
 
     /// <summary>Token to use for all I/O belonging to the call.</summary>
     public CancellationToken Token { get; }
 
     public ClientCallScope(TimeSpan? timeout, CancellationToken userToken)
     {
-        _userToken = userToken;
         if (timeout is TimeSpan value)
         {
-            _timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(userToken);
-            _timeoutCts.CancelAfter(value);
-            Token = _timeoutCts.Token;
+            // The timer gets its own CTS (not linked to the user token) so that
+            // "the deadline fired" can be read off unambiguously in DeadlineExpired.
+            _timerCts = new CancellationTokenSource();
+            _timerCts.CancelAfter(value);
+            _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(userToken, _timerCts.Token);
+            Token = _linkedCts.Token;
+            _deadlineTimestamp = Stopwatch.GetTimestamp()
+                + (long)(value.TotalSeconds * Stopwatch.Frequency);
         }
         else
         {
@@ -35,8 +41,12 @@ internal sealed class ClientCallScope : IDisposable
         }
     }
 
+    // The elapsed-time fallback covers callers that run their own timer and cancel the
+    // user token exactly at the deadline: losing that race must not turn a deadline
+    // expiry into Canceled.
     private bool DeadlineExpired =>
-        _timeoutCts != null && _timeoutCts.IsCancellationRequested && !_userToken.IsCancellationRequested;
+        _timerCts != null
+        && (_timerCts.IsCancellationRequested || Stopwatch.GetTimestamp() >= _deadlineTimestamp);
 
     /// <summary>Exception filter companion for <see cref="Normalize"/>.</summary>
     public static bool ShouldNormalize(Exception ex)
@@ -59,5 +69,9 @@ internal sealed class ClientCallScope : IDisposable
         }
     }
 
-    public void Dispose() => _timeoutCts?.Dispose();
+    public void Dispose()
+    {
+        _linkedCts?.Dispose();
+        _timerCts?.Dispose();
+    }
 }
