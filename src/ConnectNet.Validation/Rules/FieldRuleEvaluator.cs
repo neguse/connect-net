@@ -11,6 +11,22 @@ internal static class FieldRuleEvaluator
     public static void Evaluate(FieldRules rules, object? value, string path, List<Violation> violations,
         FieldDescriptor? fieldDescriptor = null)
     {
+        // Unwrap google.protobuf.*Value wrapper messages so the corresponding scalar rules
+        // (string, int32, ...) apply to the wrapped value.
+        value = value switch
+        {
+            StringValue sv => sv.Value,
+            Int32Value i32 => i32.Value,
+            Int64Value i64 => i64.Value,
+            UInt32Value u32 => u32.Value,
+            UInt64Value u64 => u64.Value,
+            FloatValue f => f.Value,
+            DoubleValue d => d.Value,
+            BoolValue b => b.Value,
+            BytesValue bs => bs.Value,
+            _ => value,
+        };
+
         switch (rules.TypeCase)
         {
             case FieldRules.TypeOneofCase.String:
@@ -98,11 +114,11 @@ internal static class FieldRuleEvaluator
                 break;
 
             case FieldRules.TypeOneofCase.Repeated:
-                RepeatedRuleEvaluator.Evaluate(rules.Repeated, value, path, violations);
+                RepeatedRuleEvaluator.Evaluate(rules.Repeated, value, path, violations, fieldDescriptor);
                 break;
 
             case FieldRules.TypeOneofCase.Map:
-                MapRuleEvaluator.Evaluate(rules.Map, value, path, violations);
+                MapRuleEvaluator.Evaluate(rules.Map, value, path, violations, fieldDescriptor);
                 break;
 
             case FieldRules.TypeOneofCase.Timestamp:

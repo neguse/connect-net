@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using Buf.Validate;
+using Google.Protobuf.Reflection;
 
 namespace ConnectNet.Validation.Rules;
 
@@ -10,10 +11,14 @@ internal static class RepeatedRuleEvaluator
     /// Internal cap on the number of items considered when evaluating <c>repeated.unique</c>
     /// in the absence of an explicit <c>max_items</c>. Stops a caller from pinning a worker
     /// thread (and the GC) by sending a giant repeated field of boxed value types.
+    /// NOTE: this cap is a deliberate deviation from protovalidate, which evaluates
+    /// <c>unique</c> over the whole list regardless of size; lists exceeding the cap are
+    /// reported as a <c>repeated.unique</c> violation instead of being scanned.
     /// </summary>
     public const int DefaultUniqueScanLimit = 10_000;
 
-    public static void Evaluate(RepeatedRules rules, object? value, string path, List<Violation> violations)
+    public static void Evaluate(RepeatedRules rules, object? value, string path, List<Violation> violations,
+        FieldDescriptor? fieldDescriptor = null)
     {
         if (value is not IList list)
             return;
@@ -63,13 +68,15 @@ internal static class RepeatedRuleEvaluator
             }
         }
 
-        // items — validate each element against item-level rules
+        // items — validate each element against item-level rules. The field descriptor of
+        // the repeated field itself is passed through so element-level rules that need
+        // reflection info (enum.defined_only) can resolve the element type.
         if (rules.Items != null)
         {
             for (int i = 0; i < list.Count; i++)
             {
                 var itemPath = $"{path}[{i}]";
-                FieldRuleEvaluator.Evaluate(rules.Items, list[i], itemPath, violations);
+                FieldRuleEvaluator.Evaluate(rules.Items, list[i], itemPath, violations, fieldDescriptor);
             }
         }
     }
@@ -77,7 +84,8 @@ internal static class RepeatedRuleEvaluator
     /// <summary>
     /// Duplicate-detection that avoids boxing for the primitive element types that protobuf
     /// repeated fields use in practice. Falls back to <c>HashSet&lt;object&gt;</c> for message
-    /// or enum types.
+    /// or enum types. Float/double NaN values are never considered duplicates of each other,
+    /// matching CEL equality (NaN != NaN).
     /// </summary>
     private static bool HasDuplicate(IList list)
     {
@@ -87,8 +95,8 @@ internal static class RepeatedRuleEvaluator
             IList<long> i64    => HasDup(i64),
             IList<uint> u32    => HasDup(u32),
             IList<ulong> u64   => HasDup(u64),
-            IList<float> f32   => HasDup(f32),
-            IList<double> f64  => HasDup(f64),
+            IList<float> f32   => HasDupFloat(f32),
+            IList<double> f64  => HasDupDouble(f64),
             IList<bool> b      => HasDup(b),
             IList<string> s    => HasDup(s),
             _                  => HasDupObject(list),
@@ -102,6 +110,32 @@ internal static class RepeatedRuleEvaluator
         for (int i = 0; i < list.Count; i++)
         {
             if (!seen.Add(list[i])) return true;
+        }
+        return false;
+    }
+
+    private static bool HasDupFloat(IList<float> list)
+    {
+        if (list.Count < 2) return false;
+        var seen = new HashSet<float>();
+        for (int i = 0; i < list.Count; i++)
+        {
+            var v = list[i];
+            if (float.IsNaN(v)) continue; // NaN != NaN
+            if (!seen.Add(v)) return true;
+        }
+        return false;
+    }
+
+    private static bool HasDupDouble(IList<double> list)
+    {
+        if (list.Count < 2) return false;
+        var seen = new HashSet<double>();
+        for (int i = 0; i < list.Count; i++)
+        {
+            var v = list[i];
+            if (double.IsNaN(v)) continue; // NaN != NaN
+            if (!seen.Add(v)) return true;
         }
         return false;
     }

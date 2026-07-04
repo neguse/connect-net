@@ -163,8 +163,10 @@ public class RepeatedRulesTests
 
         var result = _validator.Validate(msg);
 
+        // Key violations use the entry path with ForKey=true (protovalidate's for_key).
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "entries[a].key" &&
+            v.FieldPath == "entries[\"a\"]" &&
+            v.ForKey &&
             v.ConstraintId == "string.min_len");
     }
 
@@ -177,7 +179,8 @@ public class RepeatedRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "entries[ab]" &&
+            v.FieldPath == "entries[\"ab\"]" &&
+            !v.ForKey &&
             v.ConstraintId == "string.min_len");
     }
 
@@ -189,7 +192,7 @@ public class RepeatedRulesTests
 
         var result = _validator.Validate(msg);
 
-        Assert.Contains(result.Violations, v => v.FieldPath == "entries[a].key");
-        Assert.Contains(result.Violations, v => v.FieldPath == "entries[a]");
+        Assert.Contains(result.Violations, v => v.FieldPath == "entries[\"a\"]" && v.ForKey);
+        Assert.Contains(result.Violations, v => v.FieldPath == "entries[\"a\"]" && !v.ForKey);
     }
 }

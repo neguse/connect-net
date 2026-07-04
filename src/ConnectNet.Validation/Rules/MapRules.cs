@@ -1,13 +1,15 @@
 using System.Collections;
 using System.Collections.Generic;
-using System.Text;
 using Buf.Validate;
+using ConnectNet.Validation.Internal;
+using Google.Protobuf.Reflection;
 
 namespace ConnectNet.Validation.Rules;
 
 internal static class MapRuleEvaluator
 {
-    public static void Evaluate(MapRules rules, object? value, string path, List<Violation> violations)
+    public static void Evaluate(MapRules rules, object? value, string path, List<Violation> violations,
+        FieldDescriptor? fieldDescriptor = null)
     {
         if (value is not IDictionary dict)
             return;
@@ -32,55 +34,33 @@ internal static class MapRuleEvaluator
                 dict.Count));
         }
 
-        // keys / values — validate each key and value against their respective rules
+        // keys / values — validate each key and value against their respective rules.
+        // The synthetic map-entry descriptor provides the key (1) and value (2) field
+        // descriptors, needed by rules like enum.defined_only.
         if (rules.Keys != null || rules.Values != null)
         {
+            var keyField = fieldDescriptor?.MessageType?.FindFieldByNumber(1);
+            var valueField = fieldDescriptor?.MessageType?.FindFieldByNumber(2);
+
             foreach (DictionaryEntry entry in dict)
             {
-                // Attacker-controlled map keys flow into FieldPath; control characters here would
-                // corrupt log lines (CR/LF injection) or terminal output (ANSI escape sequences).
-                var keyStr = EscapeForPath(entry.Key?.ToString() ?? "");
+                var entryPath = path + FieldPaths.MapKeySubscript(entry.Key);
                 if (rules.Keys != null)
                 {
-                    var keyPath = $"{path}[{keyStr}].key";
-                    FieldRuleEvaluator.Evaluate(rules.Keys, entry.Key, keyPath, violations);
+                    // Key violations share the entry path; they are distinguished from value
+                    // violations by Violation.ForKey (protovalidate's for_key flag).
+                    var before = violations.Count;
+                    FieldRuleEvaluator.Evaluate(rules.Keys, entry.Key, entryPath, violations, keyField);
+                    for (int i = before; i < violations.Count; i++)
+                    {
+                        violations[i].ForKey = true;
+                    }
                 }
                 if (rules.Values != null)
                 {
-                    var valuePath = $"{path}[{keyStr}]";
-                    FieldRuleEvaluator.Evaluate(rules.Values, entry.Value, valuePath, violations);
+                    FieldRuleEvaluator.Evaluate(rules.Values, entry.Value, entryPath, violations, valueField);
                 }
             }
         }
-    }
-
-    private const int MaxKeyDisplayLength = 64;
-
-    private static string EscapeForPath(string s)
-    {
-        if (s.Length == 0) return s;
-        StringBuilder? sb = null;
-        var limit = s.Length > MaxKeyDisplayLength ? MaxKeyDisplayLength : s.Length;
-        for (int i = 0; i < limit; i++)
-        {
-            var c = s[i];
-            if (c < 0x20 || c == 0x7f || c == '"' || c == '\\' || c == '[' || c == ']')
-            {
-                sb ??= new StringBuilder(s, 0, i, s.Length + 8);
-                sb.Append('\\');
-                sb.Append('u');
-                sb.Append(((int)c).ToString("x4"));
-            }
-            else
-            {
-                sb?.Append(c);
-            }
-        }
-        if (sb == null)
-        {
-            return s.Length > limit ? s.Substring(0, limit) + "..." : s;
-        }
-        if (s.Length > limit) sb.Append("...");
-        return sb.ToString();
     }
 }

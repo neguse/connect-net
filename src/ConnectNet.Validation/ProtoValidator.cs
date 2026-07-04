@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using Buf.Validate;
 using ConnectNet.Validation.Internal;
@@ -16,7 +17,29 @@ public class ProtoValidator
     /// </summary>
     public const int MaxRecursionDepth = 32;
 
-    private readonly ConstraintCache _cache = new();
+    private readonly ConstraintCache _cache;
+
+    public ProtoValidator() : this(ignoreUnsupportedRules: false)
+    {
+    }
+
+    /// <param name="ignoreUnsupportedRules">
+    /// When false (default), encountering a protovalidate rule this implementation does not
+    /// support (CEL rules, some well-known string formats, AnyRules, FieldMaskRules, ...)
+    /// throws <see cref="System.NotSupportedException"/> instead of silently passing.
+    /// Set to true to skip such rules.
+    /// </param>
+    public ProtoValidator(bool ignoreUnsupportedRules)
+    {
+        IgnoreUnsupportedRules = ignoreUnsupportedRules;
+        _cache = new ConstraintCache(ignoreUnsupportedRules);
+    }
+
+    /// <summary>
+    /// Whether rules not supported by this implementation are silently skipped instead of
+    /// causing <see cref="System.NotSupportedException"/>. Defaults to false (fail loud).
+    /// </summary>
+    public bool IgnoreUnsupportedRules { get; }
 
     public ValidationResult Validate(IMessage message)
     {
@@ -41,37 +64,86 @@ public class ProtoValidator
             var field = constraint.Field;
             var rules = constraint.Rules;
 
-            if (rules == null)
-                continue;
-
-            if (ShouldIgnore(rules, field, message))
-                continue;
+            if (rules != null && rules.Ignore == Ignore.Always)
+                continue; // skip all rules, including required and nested validation
 
             var path = string.IsNullOrEmpty(prefix)
                 ? field.JsonName
                 : $"{prefix}.{field.JsonName}";
 
             var accessor = field.Accessor;
-            var value = accessor.GetValue(message);
 
-            // Check required for message-type fields
-            if (rules.Required && field.FieldType == FieldType.Message && value == null)
+            // Presence semantics (IGNORE_UNSPECIFIED default behavior): fields that track
+            // presence (proto3 optional, oneof members, message fields) are only validated
+            // when set. `required` demands that they are set.
+            if (field.HasPresence)
             {
-                violations.Add(new Violation(path, "required", "value is required"));
-                continue;
+                if (!accessor.HasValue(message))
+                {
+                    if (rules != null && rules.Required)
+                    {
+                        violations.Add(new Violation(path, "required", "value is required"));
+                    }
+                    continue; // unset: ignore all other rules, nothing to recurse into
+                }
+            }
+
+            var value = accessor.GetValue(message);
+            var isZero = IsDefaultValue(field, value);
+
+            if (!field.HasPresence)
+            {
+                // IGNORE_IF_ZERO_VALUE only affects fields without presence tracking
+                // (for presence-tracking fields it is a no-op per buf.validate.Ignore docs).
+                if (rules != null && rules.Ignore == Ignore.IfZeroValue && isZero)
+                    continue;
+
+                // `required` on an implicit-presence field means "must not be the zero value".
+                if (rules != null && rules.Required && isZero)
+                {
+                    violations.Add(new Violation(path, "required", "value is required"));
+                }
             }
 
             // Evaluate type-specific rules via FieldRuleEvaluator
-            if (value != null)
+            if (rules != null && value != null)
             {
                 FieldRuleEvaluator.Evaluate(rules, value, path, violations, field);
             }
 
-            // Recurse into nested messages
-            if (field.FieldType == FieldType.Message
-                && !field.IsRepeated
-                && !field.IsMap
-                && value is IMessage nestedMessage)
+            // Recurse into nested messages (singular, repeated elements, and map values).
+            if (field.FieldType != FieldType.Message || value == null)
+                continue;
+
+            if (field.IsMap)
+            {
+                var valueField = field.MessageType.FindFieldByNumber(2);
+                if (valueField.FieldType == FieldType.Message && value is IDictionary dict)
+                {
+                    foreach (DictionaryEntry entry in dict)
+                    {
+                        if (entry.Value is IMessage entryMessage)
+                        {
+                            var entryPath = path + FieldPaths.MapKeySubscript(entry.Key);
+                            ValidateMessage(entryMessage, entryPath, violations, depth + 1);
+                        }
+                    }
+                }
+            }
+            else if (field.IsRepeated)
+            {
+                if (value is IList list)
+                {
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (list[i] is IMessage itemMessage)
+                        {
+                            ValidateMessage(itemMessage, $"{path}[{i}]", violations, depth + 1);
+                        }
+                    }
+                }
+            }
+            else if (value is IMessage nestedMessage)
             {
                 ValidateMessage(nestedMessage, path, violations, depth + 1);
             }
@@ -81,25 +153,16 @@ public class ProtoValidator
         OneofRuleEvaluator.Evaluate(message, prefix, violations);
     }
 
-    private static bool ShouldIgnore(FieldRules rules, FieldDescriptor field, IMessage message)
-    {
-        if (rules.Ignore == Ignore.Always)
-            return true;
-
-        if (rules.Ignore == Ignore.IfZeroValue)
-        {
-            var value = field.Accessor.GetValue(message);
-            if (IsDefaultValue(field, value))
-                return true;
-        }
-
-        return false;
-    }
-
     private static bool IsDefaultValue(FieldDescriptor field, object? value)
     {
         if (value == null)
             return true;
+
+        if (field.IsMap)
+            return value is IDictionary dict && dict.Count == 0;
+
+        if (field.IsRepeated)
+            return value is IList list && list.Count == 0;
 
         return field.FieldType switch
         {

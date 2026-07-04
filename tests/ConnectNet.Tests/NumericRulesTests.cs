@@ -36,9 +36,10 @@ public class NumericRulesTests
 
         var result = _validator.Validate(msg);
 
+        // age declares both gte and lte, so protovalidate reports the combined rule id.
         Assert.Contains(result.Violations, v =>
             v.FieldPath == "age" &&
-            v.ConstraintId == "int32.gte");
+            v.ConstraintId == "int32.gte_lte");
     }
 
     // --- Int32 lte ---
@@ -51,9 +52,10 @@ public class NumericRulesTests
 
         var result = _validator.Validate(msg);
 
+        // age declares both gte and lte, so protovalidate reports the combined rule id.
         Assert.Contains(result.Violations, v =>
             v.FieldPath == "age" &&
-            v.ConstraintId == "int32.lte");
+            v.ConstraintId == "int32.gte_lte");
     }
 
     // --- Double range ---
@@ -77,9 +79,10 @@ public class NumericRulesTests
 
         var result = _validator.Validate(msg);
 
+        // score declares both gte and lte, so protovalidate reports the combined rule id.
         Assert.Contains(result.Violations, v =>
             v.FieldPath == "score" &&
-            v.ConstraintId == "double.lte");
+            v.ConstraintId == "double.gte_lte");
     }
 
     // --- Uint64 gt ---

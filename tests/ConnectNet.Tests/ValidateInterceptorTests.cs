@@ -91,6 +91,42 @@ public class ValidateInterceptorTests
     }
 
     [Fact]
+    public void ToFieldPath_ParsesRepeatedIndexSubscript()
+    {
+        var fieldPath = ValidateInterceptor.ToFieldPath("items[3].name");
+
+        Assert.Equal(2, fieldPath.Elements.Count);
+        Assert.Equal("items", fieldPath.Elements[0].FieldName);
+        Assert.Equal(Buf.Validate.FieldPathElement.SubscriptOneofCase.Index, fieldPath.Elements[0].SubscriptCase);
+        Assert.Equal(3ul, fieldPath.Elements[0].Index);
+        Assert.Equal("name", fieldPath.Elements[1].FieldName);
+    }
+
+    [Fact]
+    public void ToFieldPath_ParsesStringKeySubscript()
+    {
+        var fieldPath = ValidateInterceptor.ToFieldPath("entries[\"a.b\"]");
+
+        Assert.Single(fieldPath.Elements);
+        Assert.Equal("entries", fieldPath.Elements[0].FieldName);
+        Assert.Equal("a.b", fieldPath.Elements[0].StringKey);
+    }
+
+    [Fact]
+    public void ToErrorDetails_PropagatesForKey()
+    {
+        var violation = new Violation("entries[\"a\"]", "string.min_len", "too short")
+        {
+            ForKey = true,
+        };
+
+        var details = ValidateInterceptor.ToErrorDetails(new[] { violation }).ToArray();
+        var protoViolations = Buf.Validate.Violations.Parser.ParseFrom(details[0].Value);
+
+        Assert.True(protoViolations.Violations_[0].ForKey);
+    }
+
+    [Fact]
     public async Task MessageWithoutConstraints_PassesThrough()
     {
         var context = new UnaryServerContext(

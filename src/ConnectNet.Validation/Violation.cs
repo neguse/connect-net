@@ -14,6 +14,12 @@ public class Violation
     public string Message { get; }
     public object? Value { get; }
 
+    /// <summary>
+    /// True when the violation applies to a map key rather than the map value at
+    /// <see cref="FieldPath"/> (protovalidate's <c>Violation.for_key</c>).
+    /// </summary>
+    public bool ForKey { get; internal set; }
+
     public Violation(string fieldPath, string constraintId, string message, object? value = null)
     {
         FieldPath = fieldPath;

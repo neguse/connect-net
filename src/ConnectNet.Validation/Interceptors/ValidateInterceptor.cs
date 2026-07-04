@@ -52,6 +52,7 @@ public class ValidateInterceptor : IServerInterceptor
             {
                 RuleId = v.ConstraintId,
                 Message = v.Message,
+                ForKey = v.ForKey,
             };
 
             if (!string.IsNullOrEmpty(v.FieldPath))
@@ -71,17 +72,78 @@ public class ValidateInterceptor : IServerInterceptor
 
     internal static Buf.Validate.FieldPath ToFieldPath(string path)
     {
+        // Parses textual paths like `inner.name`, `items[0].name` or `entries["key"]` into
+        // protovalidate FieldPathElements with the subscript carried in the subscript oneof.
+        // Note: quoted map keys may contain '.', so this cannot simply split on dots.
         var fieldPath = new Buf.Validate.FieldPath();
-        // Split on '.' but preserve array subscripts like "items[0]"
-        var segments = path.Split('.');
-        foreach (var segment in segments)
+        int i = 0;
+        int n = path.Length;
+        while (i < n)
         {
+            int start = i;
+            bool inQuotes = false;
+            while (i < n && (inQuotes || (path[i] != '.' && path[i] != '[')))
+            {
+                if (path[i] == '"') inQuotes = !inQuotes;
+                i++;
+            }
+
             var element = new Buf.Validate.FieldPathElement
             {
-                FieldName = segment,
+                FieldName = path.Substring(start, i - start),
             };
+
+            if (i < n && path[i] == '[')
+            {
+                int close = FindSubscriptEnd(path, i + 1);
+                ApplySubscript(element, path.Substring(i + 1, close - i - 1));
+                i = close < n ? close + 1 : n;
+            }
+
             fieldPath.Elements.Add(element);
+
+            if (i < n && path[i] == '.')
+                i++;
         }
         return fieldPath;
+    }
+
+    private static int FindSubscriptEnd(string path, int start)
+    {
+        bool inQuotes = false;
+        for (int i = start; i < path.Length; i++)
+        {
+            if (path[i] == '"') inQuotes = !inQuotes;
+            else if (path[i] == ']' && !inQuotes) return i;
+        }
+        return path.Length; // malformed; consume the rest
+    }
+
+    private static void ApplySubscript(Buf.Validate.FieldPathElement element, string subscript)
+    {
+        if (subscript.Length >= 2 && subscript[0] == '"' && subscript[subscript.Length - 1] == '"')
+        {
+            element.StringKey = subscript.Substring(1, subscript.Length - 2);
+        }
+        else if (subscript == "true" || subscript == "false")
+        {
+            element.BoolKey = subscript == "true";
+        }
+        else if (ulong.TryParse(subscript, System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var index))
+        {
+            // Non-negative integers are ambiguous between repeated indices and integer map
+            // keys in the textual form; repeated indices are by far the common case.
+            element.Index = index;
+        }
+        else if (long.TryParse(subscript, System.Globalization.NumberStyles.AllowLeadingSign,
+            System.Globalization.CultureInfo.InvariantCulture, out var intKey))
+        {
+            element.IntKey = intKey;
+        }
+        else
+        {
+            element.StringKey = subscript;
+        }
     }
 }
