@@ -19,6 +19,7 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
     private readonly HttpClient _httpClient;
     private readonly Uri _uri;
     private readonly CallOptions? _options;
+    private readonly ClientCallScope _scope;
     private readonly CancellationToken _ct;
     private readonly MemoryStream _buffer = new();
     private readonly ICodec _codec;
@@ -38,7 +39,8 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
         _codec = codec;
         _channelOptions = channelOptions;
         _options = options;
-        _ct = ct;
+        _scope = new ClientCallScope(options?.Timeout, ct);
+        _ct = _scope.Token;
     }
 
     public async Task SendAsync(TReq message)
@@ -55,10 +57,25 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
 
     public async Task<TRes> CloseAndReceiveAsync()
     {
+        try
+        {
+            return await CloseAndReceiveCoreAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ClientCallScope.ShouldNormalize(ex))
+        {
+            throw _scope.Normalize(ex);
+        }
+    }
+
+    private async Task<TRes> CloseAndReceiveCoreAsync()
+    {
         _buffer.Position = 0;
         var bodyBytes = _buffer.ToArray();
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _uri);
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _uri)
+        {
+            Version = ConnectChannel.Http2,
+        };
         httpRequest.Content = new ByteArrayContent(bodyBytes);
         httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue($"application/connect+{_codec.Name}");
         httpRequest.Headers.Add("Connect-Protocol-Version", "1");
@@ -120,6 +137,14 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
                 }
             }
             throw ConnectChannel.ParseErrorResponse((ReadOnlyMemory<byte>)errorBytes, (int)httpResponse.StatusCode);
+        }
+
+        // Validate streaming Content-Type
+        var streamContentType = httpResponse.Content.Headers.ContentType?.MediaType;
+        var expectedStreamContentType = $"application/connect+{_codec.Name}";
+        if (streamContentType != null && !string.Equals(streamContentType, expectedStreamContentType, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConnectException(ConnectCode.Internal, $"unexpected content-type: {streamContentType}");
         }
 
         // Check if server is sending compressed envelopes
@@ -212,5 +237,6 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
     public void Dispose()
     {
         _buffer.Dispose();
+        _scope.Dispose();
     }
 }

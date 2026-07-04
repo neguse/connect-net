@@ -62,6 +62,13 @@ public class ConnectChannelOptions
 
 public sealed class ConnectChannel : IDisposable
 {
+    /// <summary>
+    /// Preferred HTTP version for outgoing requests. Streaming RPCs (bidi in particular)
+    /// require HTTP/2; the runtime's default version policy (RequestVersionOrLower)
+    /// negotiates down to HTTP/1.1 when the server cannot speak HTTP/2.
+    /// </summary>
+    internal static readonly Version Http2 = new Version(2, 0);
+
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
     private readonly Uri _baseUri;
@@ -101,11 +108,29 @@ public sealed class ConnectChannel : IDisposable
         if (baseUri == null) throw new ArgumentNullException(nameof(baseUri));
         if (!baseUri.IsAbsoluteUri) throw new ArgumentException("baseUri must be absolute", nameof(baseUri));
 
-        options ??= new ConnectChannelOptions();
+        options = SnapshotOptions(options ?? new ConnectChannelOptions());
         var codec = options.Codec ?? new ProtobufCodec();
         var (client, owns) = ResolveHttpClient(options);
         return new ConnectChannel(client, owns, baseUri, codec, options);
     }
+
+    /// <summary>
+    /// Copies the caller's options at construction time so later mutation of the original
+    /// object (in particular the mutable Decompressors/Interceptors lists) cannot
+    /// desynchronize the advertised Accept-Encoding from what the channel actually decodes.
+    /// </summary>
+    private static ConnectChannelOptions SnapshotOptions(ConnectChannelOptions options) => new()
+    {
+        HttpClient = options.HttpClient,
+        HttpHandler = options.HttpHandler,
+        Codec = options.Codec,
+        DisposeHttpClient = options.DisposeHttpClient,
+        RequestCompressor = options.RequestCompressor,
+        AcceptCompression = options.AcceptCompression,
+        Decompressors = new List<ICompressor>(options.Decompressors),
+        Interceptors = new List<IClientInterceptor>(options.Interceptors),
+        MaxResponseBytes = options.MaxResponseBytes,
+    };
 
     private static (HttpClient client, bool owns) ResolveHttpClient(ConnectChannelOptions options)
     {
@@ -117,8 +142,14 @@ public sealed class ConnectChannel : IDisposable
         {
             // Wrap the user-supplied handler in an HttpClient that the channel owns. The
             // handler itself is not disposed by the channel because callers may share it
-            // (e.g. a single SocketsHttpHandler reused across channels).
-            return (new HttpClient(options.HttpHandler, disposeHandler: false), owns: true);
+            // (e.g. a single SocketsHttpHandler reused across channels). Streaming RPCs can
+            // legitimately outlive HttpClient's default 100 s timeout; deadlines are enforced
+            // per call via CallOptions.Timeout / CancellationToken instead.
+            var wrapped = new HttpClient(options.HttpHandler, disposeHandler: false)
+            {
+                Timeout = System.Threading.Timeout.InfiniteTimeSpan,
+            };
+            return (wrapped, owns: true);
         }
         return (CreateDefaultHttpClient(), owns: true);
     }
@@ -138,7 +169,12 @@ public sealed class ConnectChannel : IDisposable
             UseCookies = false,
             AutomaticDecompression = DecompressionMethods.None,
         };
-        return new HttpClient(handler, disposeHandler: true);
+        return new HttpClient(handler, disposeHandler: true)
+        {
+            // Streaming RPCs can legitimately outlive HttpClient's default 100 s timeout;
+            // deadlines are enforced per call via CallOptions.Timeout / CancellationToken.
+            Timeout = System.Threading.Timeout.InfiniteTimeSpan,
+        };
     }
 
     public void Dispose()
@@ -157,15 +193,21 @@ public sealed class ConnectChannel : IDisposable
     internal ConnectChannelOptions ChannelOptions => _channelOptions;
 
     /// <summary>
-    /// Resolves a procedure path against the channel's base URI, asserting that the result
-    /// stays on the same scheme + authority. Defends against a malicious or buggy procedure
-    /// string like <c>"//evil.com/x"</c> that would otherwise cause <see cref="Uri"/> to
-    /// rewrite the authority via the "network-path reference" rule.
+    /// Resolves a procedure path against the channel's base URI, preserving any path prefix
+    /// on the base (connect-go/connect-es behavior: <c>ForAddress("https://h/rpc")</c> +
+    /// <c>"/pkg.Service/Method"</c> yields <c>https://h/rpc/pkg.Service/Method</c>), and
+    /// asserting that the result stays on the same scheme + authority. Defends against a
+    /// malicious or buggy procedure string like <c>"//evil.com/x"</c> that would otherwise
+    /// cause <see cref="Uri"/> to rewrite the authority via the "network-path reference" rule.
     /// </summary>
     internal static Uri BuildProcedureUri(Uri baseUri, string procedure)
     {
         if (procedure == null) throw new ArgumentNullException(nameof(procedure));
-        var combined = new Uri(baseUri, procedure);
+        var basePath = baseUri.AbsolutePath.TrimEnd('/');
+        var combinedPath = procedure.StartsWith("/", StringComparison.Ordinal)
+            ? basePath + procedure
+            : basePath + "/" + procedure;
+        var combined = new Uri(baseUri, combinedPath);
         if (!string.Equals(combined.Scheme, baseUri.Scheme, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(combined.Authority, baseUri.Authority, StringComparison.OrdinalIgnoreCase))
         {
@@ -204,10 +246,30 @@ public sealed class ConnectChannel : IDisposable
             // Build the chain: innermost is the actual HTTP call
             Func<UnaryRequestContext, Task<IMessage>> chain = async (ctx) =>
             {
-                // Copy any headers modified by interceptors back to options
-                var callOpts = options ?? new CallOptions();
-                callOpts.Headers = ctx.Headers;
-                return (IMessage)await SendUnaryAsync<TRes>(ctx.Procedure, ctx.Request, callOpts, ct).ConfigureAwait(false);
+                // Run the call against a per-invocation copy so interceptor header edits
+                // never mutate the caller's CallOptions instance.
+                var callOpts = new CallOptions
+                {
+                    Headers = ctx.Headers,
+                    Timeout = options?.Timeout,
+                    UseGet = options?.UseGet ?? false,
+                };
+                try
+                {
+                    return (IMessage)await SendUnaryAsync<TRes>(ctx.Procedure, ctx.Request, callOpts, ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    // Surface response metadata on the caller's options without exposing the
+                    // caller's object to interceptor mutation.
+                    if (options != null)
+                    {
+                        foreach (var kv in callOpts.ResponseHeaders)
+                            options.ResponseHeaders[kv.Key] = kv.Value;
+                        foreach (var kv in callOpts.ResponseTrailers)
+                            options.ResponseTrailers[kv.Key] = kv.Value;
+                    }
+                }
             };
 
             // Wrap interceptors in reverse order so first interceptor runs first
@@ -232,11 +294,28 @@ public sealed class ConnectChannel : IDisposable
         CancellationToken ct)
         where TRes : IMessage<TRes>, new()
     {
-        if (options?.UseGet == true)
+        using var scope = new ClientCallScope(options?.Timeout, ct);
+        try
         {
-            return await SendUnaryGetAsync<TRes>(procedure, request, options, ct).ConfigureAwait(false);
+            if (options?.UseGet == true)
+            {
+                return await SendUnaryGetCoreAsync<TRes>(procedure, request, options, scope.Token).ConfigureAwait(false);
+            }
+            return await SendUnaryPostCoreAsync<TRes>(procedure, request, options, scope.Token).ConfigureAwait(false);
         }
+        catch (Exception ex) when (ClientCallScope.ShouldNormalize(ex))
+        {
+            throw scope.Normalize(ex);
+        }
+    }
 
+    private async Task<TRes> SendUnaryPostCoreAsync<TRes>(
+        string procedure,
+        IMessage request,
+        CallOptions? options,
+        CancellationToken ct)
+        where TRes : IMessage<TRes>, new()
+    {
         var uri = BuildProcedureUri(_baseUri, procedure);
 
         // Serialize directly into a pooled buffer; the HttpContent borrows it (no ToArray()).
@@ -261,7 +340,7 @@ public sealed class ConnectChannel : IDisposable
 
         try
         {
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, uri);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, uri) { Version = Http2 };
             httpRequest.Content = new PooledMemoryHttpContent(
                 requestBody,
                 _unaryContentType,
@@ -285,7 +364,9 @@ public sealed class ConnectChannel : IDisposable
                 }
             }
 
-            using var httpResponse = await _httpClient.SendAsync(httpRequest, ct).ConfigureAwait(false);
+            // ResponseHeadersRead keeps HttpClient from buffering the entire body before
+            // ReadBoundedAsync can enforce MaxResponseBytes.
+            using var httpResponse = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
 
             // Extract response headers and Trailer-* headers only if the caller cares.
             if (options != null)
@@ -342,9 +423,15 @@ public sealed class ConnectChannel : IDisposable
                 }
             }
 
+            // Successful unary responses must carry exactly the unary content type for the
+            // negotiated codec; streaming content types and missing content types are
+            // protocol violations (Internal per the Connect spec).
             var contentType = httpResponse.Content.Headers.ContentType?.MediaType;
-            if (contentType != null && !contentType.StartsWith(_unaryContentType, StringComparison.OrdinalIgnoreCase)
-                && !contentType.StartsWith(_streamingContentType, StringComparison.OrdinalIgnoreCase))
+            if (contentType == null)
+            {
+                throw new ConnectException(ConnectCode.Internal, "missing content-type in unary response");
+            }
+            if (!string.Equals(contentType, _unaryContentType, StringComparison.OrdinalIgnoreCase))
             {
                 var ctCode = contentType.StartsWith("application/", StringComparison.OrdinalIgnoreCase)
                     ? ConnectCode.Internal : ConnectCode.Unknown;
@@ -391,7 +478,7 @@ public sealed class ConnectChannel : IDisposable
         }
     }
 
-    private async Task<TRes> SendUnaryGetAsync<TRes>(
+    private async Task<TRes> SendUnaryGetCoreAsync<TRes>(
         string procedure,
         IMessage request,
         CallOptions? options,
@@ -405,7 +492,7 @@ public sealed class ConnectChannel : IDisposable
         var query = $"encoding={Uri.EscapeDataString(_codec.Name)}&message={Uri.EscapeDataString(messageEncoded)}&base64=1&connect=v1";
         uriBuilder.Query = query;
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Get, uriBuilder.Uri);
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Get, uriBuilder.Uri) { Version = Http2 };
 
         // Signal that we accept compressed responses
         if (_channelOptions.AcceptCompression && _channelOptions.Decompressors.Count > 0)
@@ -426,7 +513,9 @@ public sealed class ConnectChannel : IDisposable
             }
         }
 
-        using var httpResponse = await _httpClient.SendAsync(httpRequest, ct).ConfigureAwait(false);
+        // ResponseHeadersRead keeps HttpClient from buffering the entire body before
+        // ReadBoundedAsync can enforce MaxResponseBytes.
+        using var httpResponse = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
 
         // Extract response headers and Trailer-* headers early so they are available even on error
         if (options != null)
@@ -471,10 +560,15 @@ public sealed class ConnectChannel : IDisposable
             throw ParseErrorResponse((ReadOnlyMemory<byte>)errorBytes, (int)httpResponse.StatusCode);
         }
 
-        // Validate Content-Type
+        // Successful unary responses must carry exactly the unary content type for the
+        // negotiated codec; streaming content types and missing content types are
+        // protocol violations (Internal per the Connect spec).
         var contentType = httpResponse.Content.Headers.ContentType?.MediaType;
-        if (contentType != null && !contentType.StartsWith($"application/{_codec.Name}", StringComparison.OrdinalIgnoreCase)
-            && !contentType.StartsWith($"application/connect+{_codec.Name}", StringComparison.OrdinalIgnoreCase))
+        if (contentType == null)
+        {
+            throw new ConnectException(ConnectCode.Internal, "missing content-type in unary response");
+        }
+        if (!string.Equals(contentType, _unaryContentType, StringComparison.OrdinalIgnoreCase))
         {
             var ctCode = contentType.StartsWith("application/", StringComparison.OrdinalIgnoreCase)
                 ? ConnectCode.Internal : ConnectCode.Unknown;
@@ -535,10 +629,38 @@ public sealed class ConnectChannel : IDisposable
         where TReq : IMessage<TReq>
         where TRes : IMessage<TRes>, new()
     {
+        using var scope = new ClientCallScope(options?.Timeout, ct);
+        await using var enumerator = ServerStreamCoreAsync<TReq, TRes>(procedure, request, options, scope.Token)
+            .GetAsyncEnumerator();
+        while (true)
+        {
+            TRes current;
+            try
+            {
+                if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    yield break;
+                current = enumerator.Current;
+            }
+            catch (Exception ex) when (ClientCallScope.ShouldNormalize(ex))
+            {
+                throw scope.Normalize(ex);
+            }
+            yield return current;
+        }
+    }
+
+    private async IAsyncEnumerable<TRes> ServerStreamCoreAsync<TReq, TRes>(
+        string procedure,
+        TReq request,
+        CallOptions? options,
+        [EnumeratorCancellation] CancellationToken ct)
+        where TReq : IMessage<TReq>
+        where TRes : IMessage<TRes>, new()
+    {
         var requestBytes = _codec.SerializeToArray(request);
         var uri = BuildProcedureUri(_baseUri, procedure);
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, uri);
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, uri) { Version = Http2 };
 
         // Wrap request in envelope, compressing if configured
         byte envelopeFlags = 0x00;
@@ -553,7 +675,7 @@ public sealed class ConnectChannel : IDisposable
         var envelopeBytes = envelopeStream.ToArray();
 
         httpRequest.Content = new ByteArrayContent(envelopeBytes);
-        httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue($"application/connect+{_codec.Name}");
+        httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue(_streamingContentType);
         httpRequest.Headers.Add("Connect-Protocol-Version", "1");
 
         // Set streaming compression headers
@@ -620,8 +742,7 @@ public sealed class ConnectChannel : IDisposable
 
         // Validate streaming Content-Type
         var streamContentType = httpResponse.Content.Headers.ContentType?.MediaType;
-        var expectedStreamContentType = $"application/connect+{_codec.Name}";
-        if (streamContentType != null && !string.Equals(streamContentType, expectedStreamContentType, StringComparison.OrdinalIgnoreCase))
+        if (streamContentType != null && !string.Equals(streamContentType, _streamingContentType, StringComparison.OrdinalIgnoreCase))
         {
             throw new ConnectException(ConnectCode.Internal, $"unexpected content-type: {streamContentType}");
         }

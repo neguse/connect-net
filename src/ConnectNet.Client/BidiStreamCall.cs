@@ -21,14 +21,18 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
     private readonly HttpClient _httpClient;
     private readonly Uri _uri;
     private readonly CallOptions? _options;
+    private readonly ClientCallScope _scope;
     private readonly CancellationToken _ct;
     private readonly ICodec _codec;
     private readonly ConnectChannelOptions _channelOptions;
+    private readonly object _startLock = new object();
 
     private StreamingContent? _streamingContent;
     private Stream? _requestStream;
+    private Task? _startTask;
     private Task<HttpResponseMessage>? _responseTask;
     private HttpRequestMessage? _httpRequest;
+    private bool _disposed;
 
     internal BidiStreamCall(
         HttpClient httpClient,
@@ -44,32 +48,65 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
         _codec = codec;
         _channelOptions = channelOptions;
         _options = options;
-        _ct = ct;
+        _scope = new ClientCallScope(options?.Timeout, ct);
+        _ct = _scope.Token;
     }
 
     public async Task SendAsync(TReq message)
     {
-        await EnsureRequestStartedAsync().ConfigureAwait(false);
-
-        var data = _codec.SerializeToArray(message);
-        byte flags = 0x00;
-        if (_channelOptions.RequestCompressor != null)
+        try
         {
-            data = _channelOptions.RequestCompressor.CompressToArray(data);
-            flags = Envelope.FlagCompressed;
+            await EnsureRequestStartedAsync().ConfigureAwait(false);
+
+            var requestStream = _requestStream;
+            if (requestStream == null)
+            {
+                // The server completed the response before the request body stream became
+                // available (it never read the request). The real status is on the response;
+                // read it via ReadResponsesAsync.
+                throw new ConnectException(
+                    ConnectCode.Unavailable,
+                    "the server completed the response before the request stream was established");
+            }
+
+            var data = _codec.SerializeToArray(message);
+            byte flags = 0x00;
+            if (_channelOptions.RequestCompressor != null)
+            {
+                data = _channelOptions.RequestCompressor.CompressToArray(data);
+                flags = Envelope.FlagCompressed;
+            }
+            await Envelope.WriteAsync(requestStream, flags, data, _ct).ConfigureAwait(false);
+            await requestStream.FlushAsync(_ct).ConfigureAwait(false);
         }
-        await Envelope.WriteAsync(_requestStream!, flags, data, _ct).ConfigureAwait(false);
-        await _requestStream!.FlushAsync(_ct).ConfigureAwait(false);
+        catch (Exception ex) when (ClientCallScope.ShouldNormalize(ex))
+        {
+            throw _scope.Normalize(ex);
+        }
     }
 
-    private async Task EnsureRequestStartedAsync()
+    /// <summary>
+    /// Starts the HTTP request exactly once, no matter how many callers race on the first
+    /// SendAsync/ReadResponsesAsync/WaitForResponseAsync.
+    /// </summary>
+    private Task EnsureRequestStartedAsync()
     {
-        if (_responseTask != null) return;
+        lock (_startLock)
+        {
+            _startTask ??= StartRequestAsync();
+            return _startTask;
+        }
+    }
 
+    private async Task StartRequestAsync()
+    {
         _streamingContent = new StreamingContent();
         _streamingContent.Headers.ContentType = new MediaTypeHeaderValue($"application/connect+{_codec.Name}");
 
-        _httpRequest = new HttpRequestMessage(HttpMethod.Post, _uri);
+        _httpRequest = new HttpRequestMessage(HttpMethod.Post, _uri)
+        {
+            Version = ConnectChannel.Http2,
+        };
         _httpRequest.Content = _streamingContent;
         _httpRequest.Headers.Add("Connect-Protocol-Version", "1");
 
@@ -95,8 +132,35 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
             }
         }
 
-        _responseTask = _httpClient.SendAsync(_httpRequest, HttpCompletionOption.ResponseHeadersRead, _ct);
-        _requestStream = await _streamingContent.GetStreamAsync().ConfigureAwait(false);
+        var responseTask = _httpClient.SendAsync(_httpRequest, HttpCompletionOption.ResponseHeadersRead, _ct);
+        _responseTask = responseTask;
+
+        // Wait for whichever happens first: the transport opens the request body stream, or
+        // the response task completes. Waiting only on the stream would hang forever on DNS
+        // failure / connection refused, because the transport never serializes the content.
+        // Cancellation is covered too: _ct faults the response task.
+        var streamTask = _streamingContent.GetStreamAsync();
+        var completed = await Task.WhenAny(responseTask, streamTask).ConfigureAwait(false);
+        if (ReferenceEquals(completed, streamTask))
+        {
+            _requestStream = await streamTask.ConfigureAwait(false);
+            return;
+        }
+
+        if (!responseTask.IsCompletedSuccessfully)
+        {
+            // Propagate connection failures / cancellation to every caller of
+            // EnsureRequestStartedAsync (the start task is cached, so they all observe it).
+            await responseTask.ConfigureAwait(false);
+        }
+
+        // The server responded before the request stream opened. If the stream materialized
+        // in the meantime, use it; otherwise leave it null so senders fail fast while
+        // readers can still consume the response.
+        if (streamTask.IsCompletedSuccessfully)
+        {
+            _requestStream = streamTask.Result;
+        }
     }
 
     /// <summary>Close the send side without reading responses.</summary>
@@ -107,6 +171,27 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
 
     /// <summary>Read responses from the server. Does NOT close the send side.</summary>
     public async IAsyncEnumerable<TRes> ReadResponsesAsync(
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await using var enumerator = ReadResponsesCoreAsync(ct).GetAsyncEnumerator();
+        while (true)
+        {
+            TRes current;
+            try
+            {
+                if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    yield break;
+                current = enumerator.Current;
+            }
+            catch (Exception ex) when (ClientCallScope.ShouldNormalize(ex))
+            {
+                throw _scope.Normalize(ex);
+            }
+            yield return current;
+        }
+    }
+
+    private async IAsyncEnumerable<TRes> ReadResponsesCoreAsync(
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         // Hold the linked CTS in a using-scope so callbacks registered on _ct aren't leaked
@@ -155,6 +240,14 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
                 }
             }
             throw ConnectChannel.ParseErrorResponse((ReadOnlyMemory<byte>)errorBytes, (int)httpResponse.StatusCode);
+        }
+
+        // Validate streaming Content-Type
+        var streamContentType = httpResponse.Content.Headers.ContentType?.MediaType;
+        var expectedStreamContentType = $"application/connect+{_codec.Name}";
+        if (streamContentType != null && !string.Equals(streamContentType, expectedStreamContentType, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConnectException(ConnectCode.Internal, $"unexpected content-type: {streamContentType}");
         }
 
         // Check if server is sending compressed envelopes
@@ -246,8 +339,15 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
     /// <summary>Wait for the HTTP response to be available (blocks until server sends headers).</summary>
     public async Task WaitForResponseAsync()
     {
-        await EnsureRequestStartedAsync().ConfigureAwait(false);
-        await _responseTask!.ConfigureAwait(false);
+        try
+        {
+            await EnsureRequestStartedAsync().ConfigureAwait(false);
+            await _responseTask!.ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ClientCallScope.ShouldNormalize(ex))
+        {
+            throw _scope.Normalize(ex);
+        }
     }
 
     /// <summary>Close send side and read all responses. Convenience for CloseSend + ReadResponsesAsync.</summary>
@@ -261,7 +361,30 @@ public class BidiStreamCall<TReq, TRes> : IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
         _streamingContent?.Complete(); // ensure we don't leave the request hanging
+
+        // Release the response (and its connection) without blocking Dispose, and observe
+        // any fault so an abandoned call cannot surface as UnobservedTaskException.
+        var responseTask = _responseTask;
+        if (responseTask != null)
+        {
+            _ = responseTask.ContinueWith(static t =>
+            {
+                if (t.IsCompletedSuccessfully)
+                {
+                    t.Result.Dispose();
+                }
+                else
+                {
+                    _ = t.Exception; // observe
+                }
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+
         _httpRequest?.Dispose();
+        _scope.Dispose();
     }
 }

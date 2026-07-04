@@ -27,10 +27,24 @@ namespace ConnectNet.Client
 
             byte[]? body = null;
             string? contentType = null;
+            List<KeyValuePair<string, string>>? contentHeaders = null;
             if (request.Content != null)
             {
                 body = await request.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
                 contentType = request.Content.Headers.ContentType?.ToString();
+                // Forward the remaining content headers (notably Content-Encoding for
+                // compressed unary requests). Content-Type is applied separately and
+                // Content-Length is computed by UnityWebRequest itself.
+                foreach (var header in request.Content.Headers)
+                {
+                    if (header.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)
+                        || header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                    contentHeaders ??= new List<KeyValuePair<string, string>>();
+                    contentHeaders.Add(new KeyValuePair<string, string>(header.Key, string.Join(",", header.Value)));
+                }
             }
 
             var tcs = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -47,13 +61,13 @@ namespace ConnectNet.Client
                 {
                     // Fire-and-forget by design (must originate from the main thread). We never
                     // throw out of this lambda — every path completes the tcs.
-                    _ = ExecuteRequestAsync(url, method, body, contentType, request.Headers, tcs, cancellationToken);
+                    _ = ExecuteRequestAsync(url, method, body, contentType, contentHeaders, request.Headers, tcs, cancellationToken);
                 }, null);
             }
             else
             {
                 // No sync context (e.g., background thread in Editor). Best effort.
-                _ = ExecuteRequestAsync(url, method, body, contentType, request.Headers, tcs, cancellationToken);
+                _ = ExecuteRequestAsync(url, method, body, contentType, contentHeaders, request.Headers, tcs, cancellationToken);
             }
 
             return await tcs.Task.ConfigureAwait(false);
@@ -61,6 +75,7 @@ namespace ConnectNet.Client
 
         private static async Task ExecuteRequestAsync(
             string url, string method, byte[]? body, string? contentType,
+            List<KeyValuePair<string, string>>? contentHeaders,
             HttpRequestHeaders requestHeaders,
             TaskCompletionSource<HttpResponseMessage> tcs,
             CancellationToken ct)
@@ -92,6 +107,13 @@ namespace ConnectNet.Client
                 {
                     uwr.SetRequestHeader("Content-Type", contentType);
                 }
+                if (contentHeaders != null)
+                {
+                    foreach (var header in contentHeaders)
+                    {
+                        uwr.SetRequestHeader(header.Key, header.Value);
+                    }
+                }
 
                 using var abortRegistration = ct.Register(static state => ((UnityWebRequest?)state)?.Abort(), uwr);
 
@@ -110,6 +132,17 @@ namespace ConnectNet.Client
                 if (ct.IsCancellationRequested)
                 {
                     tcs.TrySetCanceled(ct);
+                    return;
+                }
+
+                // Surface network-level failures the same way HttpClient does, so the upper
+                // layer can normalize them to ConnectException(Unavailable). ProtocolError is
+                // an HTTP status response and flows through the normal response path below.
+                if (uwr.result == UnityWebRequest.Result.ConnectionError
+                    || uwr.result == UnityWebRequest.Result.DataProcessingError)
+                {
+                    tcs.TrySetException(new HttpRequestException(
+                        $"UnityWebRequest failed ({uwr.result}): {uwr.error}"));
                     return;
                 }
 
