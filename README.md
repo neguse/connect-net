@@ -281,7 +281,9 @@ builder.Services.AddConnectServices(options =>
 
 ### Timeout
 
-Set a per-call timeout using `CallOptions`. The server enforces the deadline via `Connect-Timeout-Ms`.
+Set a per-call timeout using `CallOptions`. The client enforces the deadline locally
+(the call fails with `ConnectCode.DeadlineExceeded`), and the server also receives it
+via `Connect-Timeout-Ms`.
 
 ```csharp
 var response = await client.SayHelloAsync(
@@ -443,6 +445,16 @@ if (!result.IsValid)
     foreach (var violation in result.Violations)
         Console.WriteLine($"{violation.FieldPath}: {violation.Message}");
 }
+```
+
+### Unsupported rules
+
+Rules the validator does not implement (CEL expressions, `well_known_regex`, and a few
+string/bytes well-known formats) throw `NotSupportedException` when first encountered,
+rather than silently passing. To skip them instead, opt out explicitly:
+
+```csharp
+var validator = new ProtoValidator(ignoreUnsupportedRules: true);
 ```
 
 ## Architecture
