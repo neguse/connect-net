@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Buffers.Binary;
 using System.IO;
 using System.IO.Compression;
 using ConnectNet.Pooling;
@@ -62,15 +63,26 @@ public class DeflateCompressor : ICompressor
         if (maxBytes <= 0)
             throw new ConnectException(ConnectCode.ResourceExhausted, "decompression limit must be positive");
         if (source.Length < 2)
-            throw new InvalidDataException("Invalid ZLIB data");
+            throw new ConnectException(ConnectCode.InvalidArgument, "deflate: truncated stream");
 
         var span = source.Span;
         // Check if data has ZLIB header (CMF byte with method=8 for deflate)
         bool hasZlibHeader = (span[0] & 0x0F) == 8 && ((span[0] * 256 + span[1]) % 31 == 0);
 
-        ReadOnlyMemory<byte> deflateBody = hasZlibHeader
-            ? source.Slice(2)  // strip 2-byte ZLIB header; trailing Adler32 is ignored by DeflateStream EOF
-            : source;
+        ReadOnlyMemory<byte> deflateBody;
+        if (hasZlibHeader)
+        {
+            // ZLIB framing (RFC 1950): 2-byte header + DEFLATE body + 4-byte Adler32 trailer.
+            if (source.Length < 6)
+                throw new ConnectException(ConnectCode.InvalidArgument, "deflate: truncated stream");
+            deflateBody = source.Slice(2, source.Length - 6);
+        }
+        else
+        {
+            // Lenient fallback for peers sending raw DEFLATE without ZLIB framing. No
+            // checksum is available on this path, so integrity cannot be verified.
+            deflateBody = source;
+        }
 
         using var input = GzipCompressor.AsStream(deflateBody);
         using var deflate = new DeflateStream(input, CompressionMode.Decompress);
@@ -79,6 +91,7 @@ public class DeflateCompressor : ICompressor
         try
         {
             long total = 0;
+            uint adler = 1; // Adler32 seed
             int n;
             while ((n = deflate.Read(scratch, 0, scratch.Length)) > 0)
             {
@@ -87,10 +100,28 @@ public class DeflateCompressor : ICompressor
                     throw new ConnectException(
                         ConnectCode.ResourceExhausted,
                         $"decompressed size exceeds limit {maxBytes}");
+                adler = UpdateAdler32(adler, scratch.AsSpan(0, n));
                 var dest = destination.GetSpan(n);
                 scratch.AsSpan(0, n).CopyTo(dest);
                 destination.Advance(n);
             }
+
+            // DeflateStream reports EOF instead of failing when the input is cut off
+            // mid-stream, so a truncated payload would otherwise pass through silently.
+            // Verify the Adler32 trailer (big-endian, RFC 1950) against what we produced;
+            // a truncated or corrupted stream cannot match a trailer at the expected offset.
+            if (hasZlibHeader)
+            {
+                uint expected = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(span.Length - 4, 4));
+                if (expected != adler)
+                    throw new ConnectException(ConnectCode.InvalidArgument, "deflate: truncated or corrupted stream (Adler32 mismatch)");
+            }
+        }
+        catch (InvalidDataException ex)
+        {
+            // Corrupt DEFLATE data. Connect maps decompression failures to
+            // invalid_argument (connect-go: protocol errorf on decompress).
+            throw new ConnectException(ConnectCode.InvalidArgument, $"deflate: {ex.Message}");
         }
         finally
         {
@@ -98,9 +129,12 @@ public class DeflateCompressor : ICompressor
         }
     }
 
-    private static uint Adler32(ReadOnlySpan<byte> data)
+    private static uint Adler32(ReadOnlySpan<byte> data) => UpdateAdler32(1, data);
+
+    /// <summary>Streaming Adler32 (RFC 1950). Seed with 1 and feed chunks in order.</summary>
+    private static uint UpdateAdler32(uint adler, ReadOnlySpan<byte> data)
     {
-        uint a = 1, b = 0;
+        uint a = adler & 0xFFFF, b = adler >> 16;
         const uint MOD = 65521;
         for (int i = 0; i < data.Length; i++)
         {

@@ -211,6 +211,9 @@ public static class Envelope
         }
         var flushResult = await writer.FlushAsync(ct).ConfigureAwait(false);
         if (flushResult.IsCanceled) throw new OperationCanceledException(ct);
+        // The reader completed (e.g. the peer disconnected): nothing will consume further
+        // envelopes, so stop the producer instead of generating frames into the void.
+        if (flushResult.IsCompleted) throw new OperationCanceledException("envelope reader completed; no further envelopes can be written");
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Pipelines;
 using System.Threading.Tasks;
 using ConnectNet;
 using Xunit;
@@ -67,6 +68,15 @@ public class EnvelopeTests
         Assert.Equal(Envelope.FlagEndStream, r3!.Value.flags);
         var r4 = await Envelope.ReadAsync(stream);
         Assert.Null(r4);
+    }
+
+    [Fact]
+    public async Task PipeWrite_ReaderCompleted_ThrowsOperationCanceled()
+    {
+        var pipe = new Pipe();
+        pipe.Reader.Complete();
+        await Assert.ThrowsAsync<System.OperationCanceledException>(
+            () => Envelope.WriteAsync(pipe.Writer, 0x00, new byte[] { 1, 2, 3 }));
     }
 
     [Fact]

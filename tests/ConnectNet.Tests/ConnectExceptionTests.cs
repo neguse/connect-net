@@ -171,7 +171,7 @@ public class ConnectExceptionTests
     [InlineData(401, ConnectCode.Unauthenticated)]
     [InlineData(403, ConnectCode.PermissionDenied)]
     [InlineData(404, ConnectCode.Unimplemented)]
-    [InlineData(408, ConnectCode.DeadlineExceeded)]
+    [InlineData(408, ConnectCode.Unknown)]
     [InlineData(409, ConnectCode.Unknown)]
     [InlineData(412, ConnectCode.Unknown)]
     [InlineData(413, ConnectCode.Unknown)]

@@ -231,7 +231,6 @@ public class ConnectException : Exception
         401 => ConnectCode.Unauthenticated,
         403 => ConnectCode.PermissionDenied,
         404 => ConnectCode.Unimplemented,
-        408 => ConnectCode.DeadlineExceeded,
         429 => ConnectCode.Unavailable,
         502 => ConnectCode.Unavailable,
         503 => ConnectCode.Unavailable,
