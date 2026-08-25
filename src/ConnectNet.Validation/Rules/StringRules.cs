@@ -106,10 +106,10 @@ internal static class StringRuleEvaluator
         {
             try
             {
-                // Construct a Regex with explicit timeout so user-supplied patterns combined
-                // with hostile inputs can never spin a thread indefinitely (ReDoS).
-                var re = new Regex(rules.Pattern, RegexOptions.None, RegexTimeout);
-                if (!re.IsMatch(value))
+                // buf.validate defines the pattern as RE2, so it is translated rather than
+                // handed to the .NET engine verbatim (see Re2Pattern); the compiled regex
+                // carries an explicit match timeout against ReDoS.
+                if (!Re2Pattern.GetRegex(rules.Pattern).IsMatch(value))
                 {
                     violations.Add(new Violation(
                         path,

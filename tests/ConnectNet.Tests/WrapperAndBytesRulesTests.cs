@@ -143,4 +143,14 @@ public class WrapperAndBytesRulesTests
         Assert.Contains(result.Violations, v =>
             v.FieldPath == "patternVal" && v.ConstraintId == "bytes.pattern");
     }
+
+    [Fact]
+    public void BytesPattern_TrailingNewline_Violation()
+    {
+        // RE2's `$` is end of input, so `^[a-z]+$` does not accept a trailing 0x0A.
+        var msg = new BytesExtraTestMessage { PatternVal = B(0x61, 0x62, 0x63, 0x0A) };
+        var result = _validator.Validate(msg);
+        Assert.Contains(result.Violations, v =>
+            v.FieldPath == "patternVal" && v.ConstraintId == "bytes.pattern");
+    }
 }
