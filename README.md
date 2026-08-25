@@ -480,6 +480,9 @@ var validator = new ProtoValidator(ignoreUnsupportedRules: true);
 | **ConnectNet.Server** | .NET 10 | Server library: ASP.NET Core integration, unary/streaming handlers, health checks, reflection |
 | **protoc-gen-connect-csharp** | Go | Code generation plugin for `protoc` |
 
+Internal design and design decisions are documented in [docs/design.md](docs/design.md) and
+[docs/validation-design.md](docs/validation-design.md).
+
 ## Conformance
 
 connect-net passes **100%** of the [connectrpc/conformance](https://github.com/connectrpc/conformance) suite (v1.0.5) in both client and server modes.
