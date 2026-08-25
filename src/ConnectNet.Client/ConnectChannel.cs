@@ -809,22 +809,9 @@ public sealed class ConnectChannel : IDisposable
 
                 if ((flags & Envelope.FlagEndStream) != 0)
                 {
-                    var endStreamJson = Encoding.UTF8.GetString(data.Span);
-                    var jsonOptions = new JsonDocumentOptions { MaxDepth = ConnectException.MaxJsonDepth };
-                    using var doc = JsonDocument.Parse(endStreamJson, jsonOptions);
-                    var root = doc.RootElement;
-
-                    if (options != null && root.TryGetProperty("metadata", out var metadataElement))
-                    {
-                        ExtractEndStreamTrailers(metadataElement, options);
-                    }
-
-                    if (root.TryGetProperty("error", out var errorElement) && errorElement.ValueKind != JsonValueKind.Null)
-                    {
-                        var connectError = ConnectException.TryFromJsonElement(errorElement);
-                        if (connectError != null)
-                            throw connectError;
-                    }
+                    var endStreamError = ParseEndStream(data, options);
+                    if (endStreamError != null)
+                        throw endStreamError;
 
                     return (default, true);
                 }
@@ -852,6 +839,54 @@ public sealed class ConnectChannel : IDisposable
             {
                 options.ResponseHeaders[header.Key] = string.Join(",", header.Value);
             }
+        }
+    }
+
+    /// <summary>
+    /// Parses an EndStream envelope payload, applying its trailers to <paramref name="options"/>
+    /// and returning the error it carries, or null when it carries none. The payload is chosen
+    /// by the peer, so a malformed one is a protocol violation like any other and is reported as
+    /// a <see cref="ConnectException"/>: letting System.Text.Json's exception escape would hand
+    /// the peer the choice of exception type, past every <c>catch (ConnectException)</c> the
+    /// library's contract tells callers to write. An empty payload is treated as an empty object.
+    /// </summary>
+    internal static ConnectException? ParseEndStream(ReadOnlyMemory<byte> payload, CallOptions? options)
+    {
+        if (payload.Length == 0)
+            return null;
+
+        JsonDocument doc;
+        try
+        {
+            var jsonOptions = new JsonDocumentOptions { MaxDepth = ConnectException.MaxJsonDepth };
+            doc = JsonDocument.Parse(Encoding.UTF8.GetString(payload.Span), jsonOptions);
+        }
+        catch (JsonException)
+        {
+            return new ConnectException(ConnectCode.Internal, "invalid end-stream JSON");
+        }
+        catch (ArgumentException)
+        {
+            return new ConnectException(ConnectCode.Internal, "invalid end-stream JSON");
+        }
+
+        using (doc)
+        {
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return new ConnectException(ConnectCode.Internal, "end-stream payload must be a JSON object");
+
+            if (options != null && root.TryGetProperty("metadata", out var metadataElement))
+            {
+                ExtractEndStreamTrailers(metadataElement, options);
+            }
+
+            if (root.TryGetProperty("error", out var errorElement) && errorElement.ValueKind != JsonValueKind.Null)
+            {
+                return ConnectException.TryFromJsonElement(errorElement);
+            }
+
+            return null;
         }
     }
 

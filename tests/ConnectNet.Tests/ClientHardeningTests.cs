@@ -55,7 +55,10 @@ public class ClientHardeningTests
         };
     }
 
-    private static async Task<byte[]> BuildStreamBodyAsync(params IMessage[] messages)
+    private static Task<byte[]> BuildStreamBodyAsync(params IMessage[] messages)
+        => BuildStreamBodyAsync("{}", messages);
+
+    private static async Task<byte[]> BuildStreamBodyAsync(string endStreamPayload, params IMessage[] messages)
     {
         var codec = new ProtobufCodec();
         using var ms = new MemoryStream();
@@ -63,7 +66,7 @@ public class ClientHardeningTests
         {
             await Envelope.WriteAsync(ms, 0x00, codec.SerializeToArray(message));
         }
-        await Envelope.WriteAsync(ms, Envelope.FlagEndStream, Encoding.UTF8.GetBytes("{}"));
+        await Envelope.WriteAsync(ms, Envelope.FlagEndStream, Encoding.UTF8.GetBytes(endStreamPayload));
         return ms.ToArray();
     }
 
@@ -685,5 +688,83 @@ public class ClientHardeningTests
         options.Decompressors.Clear();
         var result = await channel.UnaryAsync<HelloRequest, HelloResponse>(Procedure, new HelloRequest());
         Assert.Equal("zipped", result.Message);
+    }
+
+    // --- 15. A peer-chosen end-stream payload must not choose the exception type ---
+
+    [Fact]
+    public async Task ServerStream_MalformedEndStreamJson_ThrowsConnectException()
+    {
+        var body = await BuildStreamBodyAsync("not json", new HelloResponse { Message = "hi" });
+        var handler = new AsyncMockHandler((_, _) => Task.FromResult(StreamResponse(body)));
+        using var channel = Channel(handler);
+
+        var ex = await Assert.ThrowsAsync<ConnectException>(async () =>
+        {
+            await foreach (var _ in channel.ServerStreamAsync<HelloRequest, HelloResponse>(Procedure, new HelloRequest())) { }
+        });
+        Assert.Equal(ConnectCode.Internal, ex.Code);
+    }
+
+    [Fact]
+    public async Task ServerStream_EmptyEndStreamPayload_CompletesNormally()
+    {
+        var body = await BuildStreamBodyAsync("", new HelloResponse { Message = "hi" });
+        var handler = new AsyncMockHandler((_, _) => Task.FromResult(StreamResponse(body)));
+        using var channel = Channel(handler);
+
+        var received = new List<string>();
+        await foreach (var msg in channel.ServerStreamAsync<HelloRequest, HelloResponse>(Procedure, new HelloRequest()))
+        {
+            received.Add(msg.Message);
+        }
+        Assert.Equal(new[] { "hi" }, received);
+    }
+
+    [Fact]
+    public async Task ServerStream_NonObjectEndStreamJson_ThrowsConnectException()
+    {
+        var body = await BuildStreamBodyAsync("5", new HelloResponse { Message = "hi" });
+        var handler = new AsyncMockHandler((_, _) => Task.FromResult(StreamResponse(body)));
+        using var channel = Channel(handler);
+
+        var ex = await Assert.ThrowsAsync<ConnectException>(async () =>
+        {
+            await foreach (var _ in channel.ServerStreamAsync<HelloRequest, HelloResponse>(Procedure, new HelloRequest())) { }
+        });
+        Assert.Equal(ConnectCode.Internal, ex.Code);
+    }
+
+    [Fact]
+    public async Task ClientStream_MalformedEndStreamJson_ThrowsConnectException()
+    {
+        var body = await BuildStreamBodyAsync("not json", new HelloResponse { Message = "hi" });
+        var handler = new AsyncMockHandler((_, _) => Task.FromResult(StreamResponse(body)));
+        using var channel = Channel(handler);
+        using var call = channel.ClientStreamAsync<HelloRequest, HelloResponse>(Procedure);
+        await call.SendAsync(new HelloRequest { Name = "a" });
+
+        var ex = await Assert.ThrowsAsync<ConnectException>(() => call.CloseAndReceiveAsync());
+        Assert.Equal(ConnectCode.Internal, ex.Code);
+    }
+
+    [Fact]
+    public async Task BidiStream_MalformedEndStreamJson_ThrowsConnectException()
+    {
+        var body = await BuildStreamBodyAsync("not json", new HelloResponse { Message = "hi" });
+        var handler = new AsyncMockHandler((request, token) =>
+        {
+            _ = request.Content!.ReadAsStreamAsync();
+            return Task.FromResult(StreamResponse(body));
+        });
+        using var channel = Channel(handler);
+        using var call = channel.BidiStreamAsync<HelloRequest, HelloResponse>(Procedure);
+        await call.SendAsync(new HelloRequest { Name = "a" });
+
+        var ex = await Assert.ThrowsAsync<ConnectException>(async () =>
+        {
+            await foreach (var _ in call.CompleteAndReadAsync()) { }
+        });
+        Assert.Equal(ConnectCode.Internal, ex.Code);
     }
 }

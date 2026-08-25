@@ -196,22 +196,9 @@ public class ClientStreamCall<TReq, TRes> : IDisposable
 
                 if ((flags & Envelope.FlagEndStream) != 0)
                 {
-                    var endStreamJson = Encoding.UTF8.GetString(data.Span);
-                    var jsonOptions = new JsonDocumentOptions { MaxDepth = ConnectException.MaxJsonDepth };
-                    using var doc = JsonDocument.Parse(endStreamJson, jsonOptions);
-                    var root = doc.RootElement;
-
-                    if (_options != null && root.TryGetProperty("metadata", out var metadataElement))
-                    {
-                        ConnectChannel.ExtractEndStreamTrailers(metadataElement, _options);
-                    }
-
-                    if (root.TryGetProperty("error", out var errorElement) && errorElement.ValueKind != JsonValueKind.Null)
-                    {
-                        var connectError = ConnectException.TryFromJsonElement(errorElement);
-                        if (connectError != null)
-                            throw connectError;
-                    }
+                    var endStreamError = ConnectChannel.ParseEndStream(data, _options);
+                    if (endStreamError != null)
+                        throw endStreamError;
 
                     break;
                 }
