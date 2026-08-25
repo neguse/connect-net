@@ -146,4 +146,17 @@ public class ValidateInterceptorTests
         Assert.True(called);
         Assert.Same(response, result);
     }
+
+    [Fact]
+    public void ToErrorDetails_CapsHowManyViolationsAreSerialized()
+    {
+        var violations = Enumerable.Range(0, 10_000)
+            .Select(i => new Violation($"items[{i}]", "string.min_len", "too short"))
+            .ToArray();
+
+        var details = ValidateInterceptor.ToErrorDetails(violations).ToArray();
+
+        var protoViolations = Buf.Validate.Violations.Parser.ParseFrom(details[0].Value);
+        Assert.Equal(ValidateInterceptor.MaxSerializedViolations, protoViolations.Violations_.Count);
+    }
 }

@@ -1,11 +1,12 @@
 using System.Collections.Generic;
 using Buf.Validate;
+using ConnectNet.Validation.Internal;
 
 namespace ConnectNet.Validation.Rules;
 
 internal static class BoolRuleEvaluator
 {
-    public static void Evaluate(BoolRules rules, bool value, string path, List<Violation> violations)
+    public static void Evaluate(BoolRules rules, bool value, string path, ViolationCollector violations)
     {
         // const
         if (rules.HasConst && value != rules.Const)

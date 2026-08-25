@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
 using Buf.Validate;
+using ConnectNet.Validation.Internal;
 
 namespace ConnectNet.Validation.Rules;
 
@@ -21,7 +22,7 @@ internal static class StringRuleEvaluator
         "^[0-9a-fA-F]{32}$",
         RegexOptions.Compiled, RegexTimeout);
 
-    public static void Evaluate(StringRules rules, string value, string path, List<Violation> violations)
+    public static void Evaluate(StringRules rules, string value, string path, ViolationCollector violations)
     {
         // const
         if (rules.HasConst && value != rules.Const)

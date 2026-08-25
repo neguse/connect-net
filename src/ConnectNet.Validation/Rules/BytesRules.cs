@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using Buf.Validate;
+using ConnectNet.Validation.Internal;
 using Google.Protobuf;
 
 namespace ConnectNet.Validation.Rules;
@@ -19,7 +20,7 @@ internal static class BytesRuleEvaluator
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(
         encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    public static void Evaluate(BytesRules rules, ByteString value, string path, List<Violation> violations)
+    public static void Evaluate(BytesRules rules, ByteString value, string path, ViolationCollector violations)
     {
         // const
         if (rules.HasConst && value != rules.Const)

@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using Buf.Validate;
+using ConnectNet.Validation.Internal;
 using Google.Protobuf.Reflection;
 
 namespace ConnectNet.Validation.Rules;
@@ -17,7 +18,7 @@ internal static class RepeatedRuleEvaluator
     /// </summary>
     public const int DefaultUniqueScanLimit = 10_000;
 
-    public static void Evaluate(RepeatedRules rules, object? value, string path, List<Violation> violations,
+    public static void Evaluate(RepeatedRules rules, object? value, string path, ViolationCollector violations,
         FieldDescriptor? fieldDescriptor = null)
     {
         if (value is not IList list)
@@ -75,6 +76,14 @@ internal static class RepeatedRuleEvaluator
         {
             for (int i = 0; i < list.Count; i++)
             {
+                // The element count is the caller's to choose, so stop once the collector
+                // is full rather than walking a list sized by the request.
+                if (violations.IsFull)
+                {
+                    violations.MarkTruncated();
+                    break;
+                }
+
                 var itemPath = $"{path}[{i}]";
                 FieldRuleEvaluator.Evaluate(rules.Items, list[i], itemPath, violations, fieldDescriptor);
             }

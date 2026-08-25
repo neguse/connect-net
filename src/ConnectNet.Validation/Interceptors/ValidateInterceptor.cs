@@ -43,11 +43,21 @@ public class ValidateInterceptor : IServerInterceptor
         return $"validation failed: {violations[0].Message} (and {violations.Count - 1} more)";
     }
 
+    /// <summary>
+    /// Cap on how many violations are serialized into the error detail, independent of the
+    /// validator's own limit: whatever produced the list, the response body this reflects back
+    /// to the caller stays bounded.
+    /// </summary>
+    internal const int MaxSerializedViolations = 100;
+
     internal static IEnumerable<ConnectErrorDetail> ToErrorDetails(IReadOnlyList<Violation> violations)
     {
         var protoViolations = new Buf.Validate.Violations();
         foreach (var v in violations)
         {
+            if (protoViolations.Violations_.Count >= MaxSerializedViolations)
+                break;
+
             var protoViolation = new Buf.Validate.Violation
             {
                 RuleId = v.ConstraintId,

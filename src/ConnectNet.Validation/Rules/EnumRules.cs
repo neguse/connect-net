@@ -1,13 +1,14 @@
 using System.Collections.Generic;
 using System.Linq;
 using Buf.Validate;
+using ConnectNet.Validation.Internal;
 using Google.Protobuf.Reflection;
 
 namespace ConnectNet.Validation.Rules;
 
 internal static class EnumRuleEvaluator
 {
-    public static void Evaluate(EnumRules rules, int value, string path, FieldDescriptor? fieldDescriptor, List<Violation> violations)
+    public static void Evaluate(EnumRules rules, int value, string path, FieldDescriptor? fieldDescriptor, ViolationCollector violations)
     {
         // const
         if (rules.HasConst && value != rules.Const)

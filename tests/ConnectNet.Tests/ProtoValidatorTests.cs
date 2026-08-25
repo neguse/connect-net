@@ -98,4 +98,66 @@ public class ProtoValidatorTests
         Assert.Contains(result.Violations, v => v.FieldPath == "inner.name");
         Assert.Contains(result.Violations, v => v.FieldPath == "inner.email");
     }
+
+    // --- the request must not choose how many violations the server materializes ---
+
+    [Fact]
+    public void Validate_ManyFailingItems_StopsAtTheViolationLimit()
+    {
+        var msg = new RepeatedItemsTestMessage();
+        for (int i = 0; i < 5000; i++) msg.Values.Add("x"); // each fails items.string.min_len = 3
+
+        var result = _validator.Validate(msg);
+
+        Assert.False(result.IsValid);
+        Assert.Equal(ProtoValidator.DefaultMaxViolations + 1, result.Violations.Count);
+        Assert.Contains(result.Violations, v => v.ConstraintId == "violation_limit");
+    }
+
+    [Fact]
+    public void Validate_ManyFailingNestedMessages_StopsAtTheViolationLimit()
+    {
+        var msg = new NestedTestMessage();
+        for (int i = 0; i < 5000; i++) msg.Items.Add(new StringTestMessage { Name = "Al", Email = "bad" });
+
+        var result = _validator.Validate(msg);
+
+        Assert.Equal(ProtoValidator.DefaultMaxViolations + 1, result.Violations.Count);
+        Assert.Contains(result.Violations, v => v.ConstraintId == "violation_limit");
+    }
+
+    [Fact]
+    public void Validate_ManyFailingMapEntries_StopsAtTheViolationLimit()
+    {
+        var msg = new MapKeysValuesTestMessage();
+        for (int i = 0; i < 5000; i++) msg.Entries.Add($"k{i}", "x"); // values fail min_len = 3
+
+        var result = _validator.Validate(msg);
+
+        Assert.Equal(ProtoValidator.DefaultMaxViolations + 1, result.Violations.Count);
+    }
+
+    [Fact]
+    public void Validate_BelowTheLimit_ReportsEveryViolationAndNoLimitMarker()
+    {
+        var msg = new RepeatedItemsTestMessage();
+        for (int i = 0; i < 3; i++) msg.Values.Add("x");
+
+        var result = _validator.Validate(msg);
+
+        Assert.Equal(3, result.Violations.Count);
+        Assert.DoesNotContain(result.Violations, v => v.ConstraintId == "violation_limit");
+    }
+
+    [Fact]
+    public void Validate_CustomViolationLimit_IsHonoured()
+    {
+        var validator = new ProtoValidator(ignoreUnsupportedRules: false, maxViolations: 5);
+        var msg = new RepeatedItemsTestMessage();
+        for (int i = 0; i < 100; i++) msg.Values.Add("x");
+
+        var result = validator.Validate(msg);
+
+        Assert.Equal(6, result.Violations.Count);
+    }
 }

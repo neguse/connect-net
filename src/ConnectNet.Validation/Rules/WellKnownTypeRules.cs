@@ -2,13 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Buf.Validate;
+using ConnectNet.Validation.Internal;
 using Google.Protobuf.WellKnownTypes;
 
 namespace ConnectNet.Validation.Rules;
 
 internal static class WellKnownTypeRuleEvaluator
 {
-    public static void EvaluateTimestamp(TimestampRules rules, Timestamp value, string path, List<Violation> violations)
+    public static void EvaluateTimestamp(TimestampRules rules, Timestamp value, string path, ViolationCollector violations)
     {
         // const
         if (rules.Const != null && !value.Equals(rules.Const))
@@ -64,7 +65,7 @@ internal static class WellKnownTypeRuleEvaluator
         }
     }
 
-    public static void EvaluateDuration(DurationRules rules, Duration value, string path, List<Violation> violations)
+    public static void EvaluateDuration(DurationRules rules, Duration value, string path, ViolationCollector violations)
     {
         // const
         if (rules.Const != null && !value.Equals(rules.Const))
@@ -110,7 +111,7 @@ internal static class WellKnownTypeRuleEvaluator
     private static void EvaluateRange<T>(
         T? gt, T? gte, T? lt, T? lte,
         T value, string path, string typeName,
-        List<Violation> violations,
+        ViolationCollector violations,
         Comparison<T> compare) where T : class
     {
         var lower = gt ?? gte;
