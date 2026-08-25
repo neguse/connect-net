@@ -19,6 +19,15 @@ public static class Envelope
     /// </summary>
     public const int DefaultMaxMessageBytes = 4 * 1024 * 1024;
 
+    /// <summary>
+    /// Size of the first payload rental when reading from a <see cref="Stream"/>. The length
+    /// prefix is the peer's claim about what it is going to send, not evidence that it has:
+    /// the buffer starts at this size and doubles as bytes actually arrive, so a 5-byte header
+    /// cannot pin a rental the size of the declared message (and rentals above 1 MiB, which
+    /// <see cref="ArrayPool{T}.Shared"/> does not pool, are never made speculatively).
+    /// </summary>
+    private const int InitialPayloadChunk = 64 * 1024;
+
     public static Task WriteAsync(Stream stream, byte flags, byte[] data, CancellationToken ct = default)
         => WriteAsync(stream, flags, new ReadOnlyMemory<byte>(data ?? throw new ArgumentNullException(nameof(data))), ct);
 
@@ -77,11 +86,20 @@ public static class Envelope
                     ConnectCode.ResourceExhausted,
                     $"message size {length} exceeds limit {maxLength}");
 
-            payloadBuffer = length == 0 ? Array.Empty<byte>() : ArrayPool<byte>.Shared.Rent((int)length);
+            var capacity = (int)Math.Min(length, InitialPayloadChunk);
+            payloadBuffer = length == 0 ? Array.Empty<byte>() : ArrayPool<byte>.Shared.Rent(capacity);
             bytesRead = 0;
             while (bytesRead < (int)length)
             {
-                var n = await stream.ReadAsync(payloadBuffer.AsMemory(bytesRead, (int)length - bytesRead), ct).ConfigureAwait(false);
+                if (bytesRead == capacity)
+                {
+                    capacity = (int)Math.Min(length, (long)capacity * 2);
+                    var grown = ArrayPool<byte>.Shared.Rent(capacity);
+                    Buffer.BlockCopy(payloadBuffer, 0, grown, 0, bytesRead);
+                    ArrayPool<byte>.Shared.Return(payloadBuffer);
+                    payloadBuffer = grown;
+                }
+                var n = await stream.ReadAsync(payloadBuffer.AsMemory(bytesRead, capacity - bytesRead), ct).ConfigureAwait(false);
                 if (n == 0)
                     throw new ConnectException(ConnectCode.Internal, "incomplete envelope data");
                 bytesRead += n;
@@ -158,14 +176,16 @@ public static class Envelope
             return new EnvelopeFrame(flags, null, 0);
         }
 
-        var pooled = ArrayPool<byte>.Shared.Rent((int)payloadLength);
-        try
+        // Nothing is rented until the declared payload has actually arrived in the pipeline's
+        // own buffers: the length prefix alone must not size an allocation.
+        while (true)
         {
-            while (true)
+            result = await reader.ReadAsync(ct).ConfigureAwait(false);
+            var buffer = result.Buffer;
+            if (buffer.Length >= payloadLength)
             {
-                result = await reader.ReadAsync(ct).ConfigureAwait(false);
-                var buffer = result.Buffer;
-                if (buffer.Length >= payloadLength)
+                var pooled = ArrayPool<byte>.Shared.Rent((int)payloadLength);
+                try
                 {
                     var slice = buffer.Slice(0, payloadLength);
                     slice.CopyTo(pooled.AsSpan(0, (int)payloadLength));
@@ -174,17 +194,17 @@ public static class Envelope
                     pooled = null!; // ownership transferred to frame
                     return frame;
                 }
-                if (result.IsCompleted)
+                finally
                 {
-                    reader.AdvanceTo(buffer.End);
-                    throw new ConnectException(ConnectCode.Internal, "incomplete envelope data");
+                    if (pooled != null) ArrayPool<byte>.Shared.Return(pooled);
                 }
-                reader.AdvanceTo(buffer.Start, buffer.End);
             }
-        }
-        finally
-        {
-            if (pooled != null) ArrayPool<byte>.Shared.Return(pooled);
+            if (result.IsCompleted)
+            {
+                reader.AdvanceTo(buffer.End);
+                throw new ConnectException(ConnectCode.Internal, "incomplete envelope data");
+            }
+            reader.AdvanceTo(buffer.Start, buffer.End);
         }
     }
 
