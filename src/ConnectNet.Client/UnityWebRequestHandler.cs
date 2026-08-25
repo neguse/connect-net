@@ -97,6 +97,14 @@ namespace ConnectNet.Client
                     uwr.downloadHandler = new DownloadHandlerBuffer();
                 }
 
+                // Do not follow redirects. ConnectChannel pins every request to the channel's
+                // origin, and following a peer-chosen Location would replay the request — call
+                // credentials included — against a host the caller never configured, then hand
+                // that host's body back as the RPC response. The 3xx is surfaced to the Connect
+                // layer instead, matching the no-redirect posture of the SocketsHttpHandler path.
+                // (On WebGL the browser handles redirects itself and this has no effect.)
+                uwr.redirectLimit = 0;
+
                 // Set headers. UnityWebRequest.SetRequestHeader throws on CR/LF in either name or
                 // value; we keep that behavior intact (defends against header smuggling on Unity).
                 foreach (var header in requestHeaders)
