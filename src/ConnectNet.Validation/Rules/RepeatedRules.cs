@@ -78,11 +78,8 @@ internal static class RepeatedRuleEvaluator
             {
                 // The element count is the caller's to choose, so stop once the collector
                 // is full rather than walking a list sized by the request.
-                if (violations.IsFull)
-                {
-                    violations.MarkTruncated();
+                if (violations.LimitReached())
                     break;
-                }
 
                 var itemPath = $"{path}[{i}]";
                 FieldRuleEvaluator.Evaluate(rules.Items, list[i], itemPath, violations, fieldDescriptor);

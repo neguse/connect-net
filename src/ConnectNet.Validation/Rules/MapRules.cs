@@ -46,11 +46,8 @@ internal static class MapRuleEvaluator
             {
                 // The entry count is the caller's to choose, so stop once the collector is full
                 // rather than walking a map sized by the request.
-                if (violations.IsFull)
-                {
-                    violations.MarkTruncated();
+                if (violations.LimitReached())
                     break;
-                }
 
                 var entryPath = path + FieldPaths.MapKeySubscript(entry.Key);
                 if (rules.Keys != null)

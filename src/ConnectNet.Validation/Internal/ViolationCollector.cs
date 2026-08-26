@@ -23,9 +23,9 @@ internal sealed class ViolationCollector
 
     public int Count => _violations.Count;
 
-    public bool IsFull => _violations.Count >= Limit;
+    private bool IsFull => _violations.Count >= Limit;
 
-    /// <summary>True once at least one violation has been dropped by the limit.</summary>
+    /// <summary>True once the limit has dropped a violation or cut an evaluation short.</summary>
     public bool Truncated { get; private set; }
 
     public Violation this[int index] => _violations[index];
@@ -43,9 +43,15 @@ internal sealed class ViolationCollector
     }
 
     /// <summary>
-    /// Records that there was more to check and the limit is why it was not checked. Callers
-    /// that abandon a loop on <see cref="IsFull"/> call this, since nothing was handed to
-    /// <see cref="Add"/> for the work they skipped.
+    /// True when the limit has been reached. Asking also records the truncation, because the
+    /// caller is about to skip the rest of its work: evaluators that iterate request-sized
+    /// data guard each step with this and stop when it returns true.
     /// </summary>
-    public void MarkTruncated() => Truncated = true;
+    public bool LimitReached()
+    {
+        if (!IsFull)
+            return false;
+        Truncated = true;
+        return true;
+    }
 }

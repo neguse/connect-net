@@ -110,8 +110,8 @@ public class ProtoValidatorTests
         var result = _validator.Validate(msg);
 
         Assert.False(result.IsValid);
-        Assert.Equal(ProtoValidator.DefaultMaxViolations + 1, result.Violations.Count);
-        Assert.Contains(result.Violations, v => v.ConstraintId == "violation_limit");
+        Assert.Equal(ProtoValidator.DefaultMaxViolations, result.Violations.Count);
+        Assert.True(result.Truncated);
     }
 
     [Fact]
@@ -122,8 +122,8 @@ public class ProtoValidatorTests
 
         var result = _validator.Validate(msg);
 
-        Assert.Equal(ProtoValidator.DefaultMaxViolations + 1, result.Violations.Count);
-        Assert.Contains(result.Violations, v => v.ConstraintId == "violation_limit");
+        Assert.Equal(ProtoValidator.DefaultMaxViolations, result.Violations.Count);
+        Assert.True(result.Truncated);
     }
 
     [Fact]
@@ -134,11 +134,12 @@ public class ProtoValidatorTests
 
         var result = _validator.Validate(msg);
 
-        Assert.Equal(ProtoValidator.DefaultMaxViolations + 1, result.Violations.Count);
+        Assert.Equal(ProtoValidator.DefaultMaxViolations, result.Violations.Count);
+        Assert.True(result.Truncated);
     }
 
     [Fact]
-    public void Validate_BelowTheLimit_ReportsEveryViolationAndNoLimitMarker()
+    public void Validate_BelowTheLimit_ReportsEveryViolationAndIsNotTruncated()
     {
         var msg = new RepeatedItemsTestMessage();
         for (int i = 0; i < 3; i++) msg.Values.Add("x");
@@ -146,7 +147,7 @@ public class ProtoValidatorTests
         var result = _validator.Validate(msg);
 
         Assert.Equal(3, result.Violations.Count);
-        Assert.DoesNotContain(result.Violations, v => v.ConstraintId == "violation_limit");
+        Assert.False(result.Truncated);
     }
 
     [Fact]
@@ -158,6 +159,7 @@ public class ProtoValidatorTests
 
         var result = validator.Validate(msg);
 
-        Assert.Equal(6, result.Violations.Count);
+        Assert.Equal(5, result.Violations.Count);
+        Assert.True(result.Truncated);
     }
 }

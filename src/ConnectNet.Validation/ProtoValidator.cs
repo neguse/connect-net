@@ -1,5 +1,4 @@
 using System.Collections;
-using System.Collections.Generic;
 using Buf.Validate;
 using ConnectNet.Validation.Internal;
 using ConnectNet.Validation.Rules;
@@ -21,8 +20,8 @@ public class ProtoValidator
     /// Default cap on how many violations one message may produce. The count is otherwise
     /// driven by the message itself — one violation per failing repeated element or map entry —
     /// so a single request within the receive limit could pin (and, through the error detail,
-    /// reflect back) hundreds of megabytes. Reporting stops at this many violations plus a
-    /// final <c>violation_limit</c> marker.
+    /// reflect back) hundreds of megabytes. Reporting stops at this many violations and the
+    /// result is marked <see cref="ValidationResult.Truncated"/>.
     /// </summary>
     public const int DefaultMaxViolations = 100;
 
@@ -69,19 +68,9 @@ public class ProtoValidator
         var violations = new ViolationCollector(_maxViolations);
         ValidateMessage(message, "", violations, depth: 0);
 
-        if (violations.Truncated)
-        {
-            var withMarker = new List<Violation>(violations.Violations)
-            {
-                new Violation("", "violation_limit",
-                    $"validation stopped after {violations.Limit} violations"),
-            };
-            return ValidationResult.Fail(withMarker);
-        }
-
         return violations.Count == 0
             ? ValidationResult.Success
-            : ValidationResult.Fail(violations.Violations);
+            : ValidationResult.Fail(violations.Violations, violations.Truncated);
     }
 
     private void ValidateMessage(IMessage message, string prefix, ViolationCollector violations, int depth)
@@ -99,11 +88,8 @@ public class ProtoValidator
         {
             // The remaining work is driven by the message's own shape, so stop as soon as
             // nothing further can be reported.
-            if (violations.IsFull)
-            {
-                violations.MarkTruncated();
+            if (violations.LimitReached())
                 return;
-            }
 
             var field = constraint.Field;
             var rules = constraint.Rules;
@@ -166,11 +152,8 @@ public class ProtoValidator
                 {
                     foreach (DictionaryEntry entry in dict)
                     {
-                        if (violations.IsFull)
-                        {
-                            violations.MarkTruncated();
+                        if (violations.LimitReached())
                             return;
-                        }
                         if (entry.Value is IMessage entryMessage)
                         {
                             var entryPath = path + FieldPaths.MapKeySubscript(entry.Key);
@@ -185,11 +168,8 @@ public class ProtoValidator
                 {
                     for (int i = 0; i < list.Count; i++)
                     {
-                        if (violations.IsFull)
-                        {
-                            violations.MarkTruncated();
+                        if (violations.LimitReached())
                             return;
-                        }
                         if (list[i] is IMessage itemMessage)
                         {
                             ValidateMessage(itemMessage, $"{path}[{i}]", violations, depth + 1);
