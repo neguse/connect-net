@@ -22,9 +22,9 @@ public static class Envelope
     /// <summary>
     /// Size of the first payload rental when reading from a <see cref="Stream"/>. The length
     /// prefix is the peer's claim about what it is going to send, not evidence that it has:
-    /// the buffer starts at this size and doubles as bytes actually arrive, so a 5-byte header
-    /// cannot pin a rental the size of the declared message (and rentals above 1 MiB, which
-    /// <see cref="ArrayPool{T}.Shared"/> does not pool, are never made speculatively).
+    /// the first rental is capped at this size, so a 5-byte header cannot pin a rental the
+    /// size of the declared message. Only once the peer has actually filled it is the
+    /// declared length trusted to size the full buffer.
     /// </summary>
     private const int InitialPayloadChunk = 64 * 1024;
 
@@ -93,7 +93,10 @@ public static class Envelope
             {
                 if (bytesRead == capacity)
                 {
-                    capacity = (int)Math.Min(length, (long)capacity * 2);
+                    // The peer has filled the capped first rental with real bytes, so the
+                    // declared length is no longer pure speculation: grow straight to it,
+                    // paying the copy once instead of once per doubling.
+                    capacity = (int)length;
                     var grown = ArrayPool<byte>.Shared.Rent(capacity);
                     Buffer.BlockCopy(payloadBuffer, 0, grown, 0, bytesRead);
                     ArrayPool<byte>.Shared.Return(payloadBuffer);
