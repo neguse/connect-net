@@ -73,21 +73,8 @@ public class ConnectException : Exception
     {
         if (string.IsNullOrWhiteSpace(json))
             return null;
-        try
-        {
-            var options = new JsonDocumentOptions { MaxDepth = MaxJsonDepth };
-            using var doc = JsonDocument.Parse(json, options);
-            return TryFromJsonElement(doc.RootElement, fallbackCode);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-        catch (ArgumentException)
-        {
-            // Triggered, e.g., when JsonDocument receives a string with invalid surrogate pairs.
-            return null;
-        }
+        using var doc = TryParseJson(json);
+        return doc == null ? null : TryFromJsonElement(doc.RootElement, fallbackCode);
     }
 
     /// <summary>
@@ -97,11 +84,38 @@ public class ConnectException : Exception
     public static ConnectException? TryFromJson(ReadOnlyMemory<byte> utf8Json, ConnectCode fallbackCode = ConnectCode.Unknown)
     {
         if (utf8Json.IsEmpty) return null;
+        using var doc = TryParseJson(utf8Json);
+        return doc == null ? null : TryFromJsonElement(doc.RootElement, fallbackCode);
+    }
+
+    /// <summary>
+    /// Parses peer-supplied JSON under the hardening rules used everywhere the library reads
+    /// it: nesting depth is bounded by <see cref="MaxJsonDepth"/>, and malformed input — the
+    /// <see cref="ArgumentException"/> for invalid surrogate pairs included — yields null
+    /// rather than an exception of the peer's choosing.
+    /// </summary>
+    internal static JsonDocument? TryParseJson(ReadOnlyMemory<byte> utf8Json)
+    {
         try
         {
-            var options = new JsonDocumentOptions { MaxDepth = MaxJsonDepth };
-            using var doc = JsonDocument.Parse(utf8Json, options);
-            return TryFromJsonElement(doc.RootElement, fallbackCode);
+            return JsonDocument.Parse(utf8Json, new JsonDocumentOptions { MaxDepth = MaxJsonDepth });
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>String overload of <see cref="TryParseJson(ReadOnlyMemory{byte})"/>.</summary>
+    internal static JsonDocument? TryParseJson(string json)
+    {
+        try
+        {
+            return JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = MaxJsonDepth });
         }
         catch (JsonException)
         {

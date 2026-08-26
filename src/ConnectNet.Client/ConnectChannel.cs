@@ -855,39 +855,25 @@ public sealed class ConnectChannel : IDisposable
         if (payload.Length == 0)
             return null;
 
-        JsonDocument doc;
-        try
-        {
-            var jsonOptions = new JsonDocumentOptions { MaxDepth = ConnectException.MaxJsonDepth };
-            doc = JsonDocument.Parse(Encoding.UTF8.GetString(payload.Span), jsonOptions);
-        }
-        catch (JsonException)
-        {
+        using var doc = ConnectException.TryParseJson(payload);
+        if (doc == null)
             return new ConnectException(ConnectCode.Internal, "invalid end-stream JSON");
-        }
-        catch (ArgumentException)
+
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+            return new ConnectException(ConnectCode.Internal, "end-stream payload must be a JSON object");
+
+        if (options != null && root.TryGetProperty("metadata", out var metadataElement))
         {
-            return new ConnectException(ConnectCode.Internal, "invalid end-stream JSON");
+            ExtractEndStreamTrailers(metadataElement, options);
         }
 
-        using (doc)
+        if (root.TryGetProperty("error", out var errorElement) && errorElement.ValueKind != JsonValueKind.Null)
         {
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-                return new ConnectException(ConnectCode.Internal, "end-stream payload must be a JSON object");
-
-            if (options != null && root.TryGetProperty("metadata", out var metadataElement))
-            {
-                ExtractEndStreamTrailers(metadataElement, options);
-            }
-
-            if (root.TryGetProperty("error", out var errorElement) && errorElement.ValueKind != JsonValueKind.Null)
-            {
-                return ConnectException.TryFromJsonElement(errorElement);
-            }
-
-            return null;
+            return ConnectException.TryFromJsonElement(errorElement);
         }
+
+        return null;
     }
 
     internal static void ExtractEndStreamTrailers(JsonElement metadataElement, CallOptions options)
@@ -901,6 +887,9 @@ public sealed class ConnectChannel : IDisposable
                     var values = new List<string>();
                     foreach (var v in prop.Value.EnumerateArray())
                     {
+                        // The array's members are the peer's to choose; one that is not a
+                        // string is skipped rather than allowed to pick the exception type.
+                        if (v.ValueKind != JsonValueKind.String) continue;
                         var s = v.GetString();
                         if (s != null) values.Add(s);
                     }

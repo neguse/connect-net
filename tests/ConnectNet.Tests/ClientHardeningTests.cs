@@ -736,6 +736,37 @@ public class ClientHardeningTests
     }
 
     [Fact]
+    public async Task ServerStream_NonStringMetadataInEndStream_DoesNotThrow()
+    {
+        // Every member of a metadata array is peer-chosen; a non-string member must be
+        // skipped, not surfaced as an exception type of the peer's choosing.
+        var body = await BuildStreamBodyAsync(@"{""metadata"":{""k"":[5]}}", new HelloResponse { Message = "hi" });
+        var handler = new AsyncMockHandler((_, _) => Task.FromResult(StreamResponse(body)));
+        using var channel = Channel(handler);
+
+        var received = new List<string>();
+        await foreach (var msg in channel.ServerStreamAsync<HelloRequest, HelloResponse>(Procedure, new HelloRequest()))
+        {
+            received.Add(msg.Message);
+        }
+        Assert.Equal(new[] { "hi" }, received);
+    }
+
+    [Fact]
+    public void ParseEndStream_MixedMetadataArray_KeepsOnlyStringMembers()
+    {
+        var payload = Encoding.UTF8.GetBytes(
+            @"{""metadata"":{""k"":[""a"",5,null,{""x"":1},""b""],""n"":7}}");
+        var options = new CallOptions();
+
+        var error = ConnectChannel.ParseEndStream(payload, options);
+
+        Assert.Null(error);
+        Assert.Equal("a,b", options.ResponseTrailers["k"]);
+        Assert.False(options.ResponseTrailers.ContainsKey("n"));
+    }
+
+    [Fact]
     public async Task ClientStream_MalformedEndStreamJson_ThrowsConnectException()
     {
         var body = await BuildStreamBodyAsync("not json", new HelloResponse { Message = "hi" });
