@@ -161,4 +161,148 @@ public class Re2PatternTests
     {
         Assert.Same(Re2Pattern.GetRegex("^[a-z]+$"), Re2Pattern.GetRegex("^[a-z]+$"));
     }
+
+    // --- the `m` flag is tracked by scope, not detected by a pattern-wide text scan ---
+
+    [Fact]
+    public void ScopedMultilineGroup_DoesNotLeakPastItsGroup()
+    {
+        Assert.False(Matches("(?m:a)b$", "ab\n"));
+        Assert.True(Matches("(?m:a)b$", "ab"));
+    }
+
+    [Fact]
+    public void ClearedMultilineFlag_KeepsEndOfTextAnchor()
+    {
+        Assert.False(Matches("(?i-m)^a$", "a\n"));
+        Assert.True(Matches("(?i-m)^a$", "A"));
+    }
+
+    [Fact]
+    public void FlagGroupAfterTheAnchor_DoesNotAffectIt()
+    {
+        Assert.False(Matches("^a$(?m)", "a\n"));
+        Assert.True(Matches("^a$(?m)", "a"));
+    }
+
+    [Fact]
+    public void FlagLikeTextInsideCharacterClass_IsNotAFlag()
+    {
+        Assert.False(Matches("^[a-z(?m)]+$", "abc\n"));
+        Assert.True(Matches("^[a-z(?m)]+$", "abc(?m)"));
+    }
+
+    [Fact]
+    public void MultilineFlag_EndsWithItsEnclosingGroup()
+    {
+        Assert.False(Matches("((?m)a)b$", "ab\n"));
+        Assert.True(Matches("((?m)a)b$", "ab"));
+    }
+
+    // --- '-' inside a class: ranges form only between two single characters ---
+
+    [Fact]
+    public void DashAfterShorthandClass_IsLiteral()
+    {
+        Assert.True(Matches(@"^[\w-~]+$", "a-~_"));
+        Assert.False(Matches(@"^[\w-~]+$", "|"));
+        Assert.False(Matches(@"^[\w-~]+$", "{"));
+        Assert.False(Matches(@"^[\w-~]+$", "`"));
+    }
+
+    [Fact]
+    public void DashAfterShorthandClass_BeforeSpace_IsLiteral()
+    {
+        // Handed to .NET verbatim this class is a reversed range and rejects every value.
+        Assert.True(Matches(@"^[\w- ]+$", "a b-c"));
+        Assert.False(Matches(@"^[\w- ]+$", "|"));
+    }
+
+    [Fact]
+    public void DashAfterPosixClass_IsLiteral()
+    {
+        Assert.True(Matches("^[[:blank:]-~]+$", "\t -~"));
+        Assert.False(Matches("^[[:blank:]-~]+$", "0"));
+        Assert.False(Matches("^[[:space:]-~]+$", "0"));
+        Assert.False(Matches(@"^[[:cntrl:]-\xFF]+$", "\u0090"));
+        Assert.True(Matches(@"^[[:cntrl:]-\xFF]+$", "-\u00FF\t"));
+    }
+
+    [Fact]
+    public void ClassSubtractionSyntax_HasNoSpecialMeaning()
+    {
+        // .NET reads -[...] as class subtraction; RE2 ends the class at the first ']'.
+        Assert.True(Matches("^[a-c-[b]]$", "a]"));
+        Assert.True(Matches("^[a-c-[b]]$", "b]"));
+        Assert.False(Matches("^[a-c-[b]]$", "a"));
+    }
+
+    [Fact]
+    public void ReversedRange_IsRejected()
+    {
+        Assert.Throws<ArgumentException>(() => Re2Pattern.GetRegex("^[z-a]$"));
+    }
+
+    [Fact]
+    public void RangeWithClassEndpoint_IsRejected()
+    {
+        Assert.Throws<ArgumentException>(() => Re2Pattern.GetRegex(@"^[a-\d]$"));
+    }
+
+    // --- RE2-only spellings are translated, not left to fail or change meaning ---
+
+    [Fact]
+    public void OctalEscape_IsACharacterCode_NotABackreference()
+    {
+        Assert.True(Matches(@"^(a)\1$", "a\x01"));
+        Assert.False(Matches(@"^(a)\1$", "aa"));
+    }
+
+    [Fact]
+    public void BracedHexEscape_IsTranslated()
+    {
+        Assert.True(Matches(@"^\x{61}$", "a"));
+        Assert.False(Matches(@"^\x{61}$", "b"));
+        Assert.True(Matches(@"^\x{1F600}$", "\U0001F600"));
+    }
+
+    [Fact]
+    public void QuotedLiteral_IsTranslated()
+    {
+        Assert.True(Matches(@"^\Qa.b\E$", "a.b"));
+        Assert.False(Matches(@"^\Qa.b\E$", "axb"));
+        Assert.True(Matches(@"^\Qa+\E$", "a+"));
+    }
+
+    [Fact]
+    public void NamedGroup_Re2Spelling_IsTranslated()
+    {
+        Assert.True(Matches("^(?P<x>a)b$", "ab"));
+        Assert.True(Matches("^(?<x>a)b$", "ab"));
+    }
+
+    // --- constructs RE2 rejects are rejected, not compiled with .NET meanings ---
+
+    [Theory]
+    [InlineData("^(?=a)a$")]     // lookahead
+    [InlineData("^(?!b)a$")]     // negative lookahead
+    [InlineData("^(?<=a)b$")]    // lookbehind
+    [InlineData("^(?<!a)b$")]    // negative lookbehind
+    [InlineData("^a(?#note)b$")] // comment group
+    [InlineData(@"^a\Z")]        // \Z is .NET-only
+    [InlineData(@"^[\b]$")]      // backspace class member is .NET-only
+    [InlineData(@"^a\8$")]       // \8 is not an octal escape
+    [InlineData("^(?xi)a$")]     // x is not an RE2 flag
+    public void NetOnlyConstructs_AreRejected(string pattern)
+    {
+        Assert.Throws<ArgumentException>(() => Re2Pattern.GetRegex(pattern));
+    }
+
+    [Fact]
+    public void InvalidPattern_FailsTheSameWayWhenAskedTwice()
+    {
+        // Failures are cached like successes; the second lookup must not bypass the error.
+        Assert.Throws<ArgumentException>(() => Re2Pattern.GetRegex(@"^\x{$"));
+        Assert.Throws<ArgumentException>(() => Re2Pattern.GetRegex(@"^\x{$"));
+    }
 }
