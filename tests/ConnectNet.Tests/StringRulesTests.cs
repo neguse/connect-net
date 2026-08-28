@@ -198,6 +198,20 @@ public class StringRulesTests
             v.ConstraintId == "string.pattern");
     }
 
+    [Fact]
+    public void Pattern_TrailingNewline_Violation()
+    {
+        // RE2's `$` is end of input, so `^[a-z]+$` does not accept a smuggled newline.
+        var msg = ValidMessage();
+        msg.PatternVal = "lowercase\n";
+
+        var result = _validator.Validate(msg);
+
+        Assert.Contains(result.Violations, v =>
+            v.FieldPath == "patternVal" &&
+            v.ConstraintId == "string.pattern");
+    }
+
     // --- combined rules ---
 
     [Fact]

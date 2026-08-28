@@ -8,7 +8,7 @@ namespace ConnectNet.Validation.Rules;
 
 internal static class MapRuleEvaluator
 {
-    public static void Evaluate(MapRules rules, object? value, string path, List<Violation> violations,
+    public static void Evaluate(MapRules rules, object? value, string path, ViolationCollector violations,
         FieldDescriptor? fieldDescriptor = null)
     {
         if (value is not IDictionary dict)
@@ -44,6 +44,11 @@ internal static class MapRuleEvaluator
 
             foreach (DictionaryEntry entry in dict)
             {
+                // The entry count is the caller's to choose, so stop once the collector is full
+                // rather than walking a map sized by the request.
+                if (violations.LimitReached())
+                    break;
+
                 var entryPath = path + FieldPaths.MapKeySubscript(entry.Key);
                 if (rules.Keys != null)
                 {

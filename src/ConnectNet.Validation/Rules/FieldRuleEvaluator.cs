@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Buf.Validate;
+using ConnectNet.Validation.Internal;
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
 using Google.Protobuf.WellKnownTypes;
@@ -8,7 +9,7 @@ namespace ConnectNet.Validation.Rules;
 
 internal static class FieldRuleEvaluator
 {
-    public static void Evaluate(FieldRules rules, object? value, string path, List<Violation> violations,
+    public static void Evaluate(FieldRules rules, object? value, string path, ViolationCollector violations,
         FieldDescriptor? fieldDescriptor = null)
     {
         // Unwrap google.protobuf.*Value wrapper messages so the corresponding scalar rules

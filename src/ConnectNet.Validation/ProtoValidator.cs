@@ -1,5 +1,4 @@
 using System.Collections;
-using System.Collections.Generic;
 using Buf.Validate;
 using ConnectNet.Validation.Internal;
 using ConnectNet.Validation.Rules;
@@ -17,7 +16,17 @@ public class ProtoValidator
     /// </summary>
     public const int MaxRecursionDepth = 32;
 
+    /// <summary>
+    /// Default cap on how many violations one message may produce. The count is otherwise
+    /// driven by the message itself — one violation per failing repeated element or map entry —
+    /// so a single request within the receive limit could pin (and, through the error detail,
+    /// reflect back) hundreds of megabytes. Reporting stops at this many violations and the
+    /// result is marked <see cref="ValidationResult.Truncated"/>.
+    /// </summary>
+    public const int DefaultMaxViolations = 100;
+
     private readonly ConstraintCache _cache;
+    private readonly int _maxViolations;
 
     public ProtoValidator() : this(ignoreUnsupportedRules: false)
     {
@@ -30,8 +39,21 @@ public class ProtoValidator
     /// Set to true to skip such rules.
     /// </param>
     public ProtoValidator(bool ignoreUnsupportedRules)
+        : this(ignoreUnsupportedRules, DefaultMaxViolations)
     {
+    }
+
+    /// <param name="ignoreUnsupportedRules">See <see cref="ProtoValidator(bool)"/>.</param>
+    /// <param name="maxViolations">
+    /// Cap on the violations one message may produce; see <see cref="DefaultMaxViolations"/>.
+    /// </param>
+    public ProtoValidator(bool ignoreUnsupportedRules, int maxViolations)
+    {
+        if (maxViolations <= 0)
+            throw new System.ArgumentOutOfRangeException(nameof(maxViolations), "maxViolations must be positive");
+
         IgnoreUnsupportedRules = ignoreUnsupportedRules;
+        _maxViolations = maxViolations;
         _cache = new ConstraintCache(ignoreUnsupportedRules);
     }
 
@@ -43,12 +65,15 @@ public class ProtoValidator
 
     public ValidationResult Validate(IMessage message)
     {
-        var violations = new List<Violation>();
+        var violations = new ViolationCollector(_maxViolations);
         ValidateMessage(message, "", violations, depth: 0);
-        return violations.Count == 0 ? ValidationResult.Success : ValidationResult.Fail(violations);
+
+        return violations.Count == 0
+            ? ValidationResult.Success
+            : ValidationResult.Fail(violations.Violations, violations.Truncated);
     }
 
-    private void ValidateMessage(IMessage message, string prefix, List<Violation> violations, int depth)
+    private void ValidateMessage(IMessage message, string prefix, ViolationCollector violations, int depth)
     {
         if (depth >= MaxRecursionDepth)
         {
@@ -61,6 +86,11 @@ public class ProtoValidator
 
         foreach (var constraint in constraints)
         {
+            // The remaining work is driven by the message's own shape, so stop as soon as
+            // nothing further can be reported.
+            if (violations.LimitReached())
+                return;
+
             var field = constraint.Field;
             var rules = constraint.Rules;
 
@@ -122,6 +152,8 @@ public class ProtoValidator
                 {
                     foreach (DictionaryEntry entry in dict)
                     {
+                        if (violations.LimitReached())
+                            return;
                         if (entry.Value is IMessage entryMessage)
                         {
                             var entryPath = path + FieldPaths.MapKeySubscript(entry.Key);
@@ -136,6 +168,8 @@ public class ProtoValidator
                 {
                     for (int i = 0; i < list.Count; i++)
                     {
+                        if (violations.LimitReached())
+                            return;
                         if (list[i] is IMessage itemMessage)
                         {
                             ValidateMessage(itemMessage, $"{path}[{i}]", violations, depth + 1);

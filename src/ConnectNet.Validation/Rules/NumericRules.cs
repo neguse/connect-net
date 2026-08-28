@@ -2,62 +2,63 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Buf.Validate;
+using ConnectNet.Validation.Internal;
 
 namespace ConnectNet.Validation.Rules;
 
 internal static class NumericRuleEvaluator
 {
-    public static void EvaluateInt32(Int32Rules rules, int value, string path, List<Violation> violations)
+    public static void EvaluateInt32(Int32Rules rules, int value, string path, ViolationCollector violations)
         => Evaluate(rules.HasConst, rules.Const, rules.HasGt, rules.Gt, rules.HasGte, rules.Gte,
             rules.HasLt, rules.Lt, rules.HasLte, rules.Lte, rules.In, rules.NotIn,
             value, path, "int32", violations);
 
-    public static void EvaluateInt64(Int64Rules rules, long value, string path, List<Violation> violations)
+    public static void EvaluateInt64(Int64Rules rules, long value, string path, ViolationCollector violations)
         => Evaluate(rules.HasConst, rules.Const, rules.HasGt, rules.Gt, rules.HasGte, rules.Gte,
             rules.HasLt, rules.Lt, rules.HasLte, rules.Lte, rules.In, rules.NotIn,
             value, path, "int64", violations);
 
-    public static void EvaluateUInt32(UInt32Rules rules, uint value, string path, List<Violation> violations)
+    public static void EvaluateUInt32(UInt32Rules rules, uint value, string path, ViolationCollector violations)
         => Evaluate(rules.HasConst, rules.Const, rules.HasGt, rules.Gt, rules.HasGte, rules.Gte,
             rules.HasLt, rules.Lt, rules.HasLte, rules.Lte, rules.In, rules.NotIn,
             value, path, "uint32", violations);
 
-    public static void EvaluateUInt64(UInt64Rules rules, ulong value, string path, List<Violation> violations)
+    public static void EvaluateUInt64(UInt64Rules rules, ulong value, string path, ViolationCollector violations)
         => Evaluate(rules.HasConst, rules.Const, rules.HasGt, rules.Gt, rules.HasGte, rules.Gte,
             rules.HasLt, rules.Lt, rules.HasLte, rules.Lte, rules.In, rules.NotIn,
             value, path, "uint64", violations);
 
-    public static void EvaluateSInt32(SInt32Rules rules, int value, string path, List<Violation> violations)
+    public static void EvaluateSInt32(SInt32Rules rules, int value, string path, ViolationCollector violations)
         => Evaluate(rules.HasConst, rules.Const, rules.HasGt, rules.Gt, rules.HasGte, rules.Gte,
             rules.HasLt, rules.Lt, rules.HasLte, rules.Lte, rules.In, rules.NotIn,
             value, path, "sint32", violations);
 
-    public static void EvaluateSInt64(SInt64Rules rules, long value, string path, List<Violation> violations)
+    public static void EvaluateSInt64(SInt64Rules rules, long value, string path, ViolationCollector violations)
         => Evaluate(rules.HasConst, rules.Const, rules.HasGt, rules.Gt, rules.HasGte, rules.Gte,
             rules.HasLt, rules.Lt, rules.HasLte, rules.Lte, rules.In, rules.NotIn,
             value, path, "sint64", violations);
 
-    public static void EvaluateFixed32(Fixed32Rules rules, uint value, string path, List<Violation> violations)
+    public static void EvaluateFixed32(Fixed32Rules rules, uint value, string path, ViolationCollector violations)
         => Evaluate(rules.HasConst, rules.Const, rules.HasGt, rules.Gt, rules.HasGte, rules.Gte,
             rules.HasLt, rules.Lt, rules.HasLte, rules.Lte, rules.In, rules.NotIn,
             value, path, "fixed32", violations);
 
-    public static void EvaluateFixed64(Fixed64Rules rules, ulong value, string path, List<Violation> violations)
+    public static void EvaluateFixed64(Fixed64Rules rules, ulong value, string path, ViolationCollector violations)
         => Evaluate(rules.HasConst, rules.Const, rules.HasGt, rules.Gt, rules.HasGte, rules.Gte,
             rules.HasLt, rules.Lt, rules.HasLte, rules.Lte, rules.In, rules.NotIn,
             value, path, "fixed64", violations);
 
-    public static void EvaluateSFixed32(SFixed32Rules rules, int value, string path, List<Violation> violations)
+    public static void EvaluateSFixed32(SFixed32Rules rules, int value, string path, ViolationCollector violations)
         => Evaluate(rules.HasConst, rules.Const, rules.HasGt, rules.Gt, rules.HasGte, rules.Gte,
             rules.HasLt, rules.Lt, rules.HasLte, rules.Lte, rules.In, rules.NotIn,
             value, path, "sfixed32", violations);
 
-    public static void EvaluateSFixed64(SFixed64Rules rules, long value, string path, List<Violation> violations)
+    public static void EvaluateSFixed64(SFixed64Rules rules, long value, string path, ViolationCollector violations)
         => Evaluate(rules.HasConst, rules.Const, rules.HasGt, rules.Gt, rules.HasGte, rules.Gte,
             rules.HasLt, rules.Lt, rules.HasLte, rules.Lte, rules.In, rules.NotIn,
             value, path, "sfixed64", violations);
 
-    public static void EvaluateFloat(FloatRules rules, float value, string path, List<Violation> violations)
+    public static void EvaluateFloat(FloatRules rules, float value, string path, ViolationCollector violations)
     {
         if (rules.HasFinite && rules.Finite && (float.IsNaN(value) || float.IsInfinity(value)))
         {
@@ -69,7 +70,7 @@ internal static class NumericRuleEvaluator
             value, path, "float", violations, isNaN: float.IsNaN(value));
     }
 
-    public static void EvaluateDouble(DoubleRules rules, double value, string path, List<Violation> violations)
+    public static void EvaluateDouble(DoubleRules rules, double value, string path, ViolationCollector violations)
     {
         if (rules.HasFinite && rules.Finite && (double.IsNaN(value) || double.IsInfinity(value)))
         {
@@ -97,7 +98,7 @@ internal static class NumericRuleEvaluator
         bool hasLt, T lt, bool hasLte, T lte,
         IEnumerable<T> inList, IEnumerable<T> notInList,
         T value, string path, string typeName,
-        List<Violation> violations,
+        ViolationCollector violations,
         bool isNaN = false) where T : IComparable<T>
     {
         // const — NaN never equals anything (including a NaN const)
@@ -142,7 +143,7 @@ internal static class NumericRuleEvaluator
         bool hasGt, T gt, bool hasGte, T gte,
         bool hasLt, T lt, bool hasLte, T lte,
         T value, string path, string typeName,
-        List<Violation> violations,
+        ViolationCollector violations,
         bool isNaN) where T : IComparable<T>
     {
         bool hasLower = hasGt || hasGte;

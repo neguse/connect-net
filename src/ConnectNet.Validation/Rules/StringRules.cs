@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
 using Buf.Validate;
+using ConnectNet.Validation.Internal;
 
 namespace ConnectNet.Validation.Rules;
 
@@ -21,7 +22,7 @@ internal static class StringRuleEvaluator
         "^[0-9a-fA-F]{32}$",
         RegexOptions.Compiled, RegexTimeout);
 
-    public static void Evaluate(StringRules rules, string value, string path, List<Violation> violations)
+    public static void Evaluate(StringRules rules, string value, string path, ViolationCollector violations)
     {
         // const
         if (rules.HasConst && value != rules.Const)
@@ -105,10 +106,10 @@ internal static class StringRuleEvaluator
         {
             try
             {
-                // Construct a Regex with explicit timeout so user-supplied patterns combined
-                // with hostile inputs can never spin a thread indefinitely (ReDoS).
-                var re = new Regex(rules.Pattern, RegexOptions.None, RegexTimeout);
-                if (!re.IsMatch(value))
+                // buf.validate defines the pattern as RE2, so it is translated rather than
+                // handed to the .NET engine verbatim (see Re2Pattern); the compiled regex
+                // carries an explicit match timeout against ReDoS.
+                if (!Re2Pattern.GetRegex(rules.Pattern).IsMatch(value))
                 {
                     violations.Add(new Violation(
                         path,

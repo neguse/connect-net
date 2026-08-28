@@ -4,22 +4,20 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using Buf.Validate;
+using ConnectNet.Validation.Internal;
 using Google.Protobuf;
 
 namespace ConnectNet.Validation.Rules;
 
 internal static class BytesRuleEvaluator
 {
-    // See StringRuleEvaluator.RegexTimeout — same ReDoS rationale.
-    private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(100);
-
     // Strict UTF-8 decoder: bytes.pattern applies the regex to the value interpreted as
     // UTF-8; values that are not valid UTF-8 cannot match (protovalidate/CEL semantics,
     // where string(bytes) errors on invalid UTF-8).
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(
         encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    public static void Evaluate(BytesRules rules, ByteString value, string path, List<Violation> violations)
+    public static void Evaluate(BytesRules rules, ByteString value, string path, ViolationCollector violations)
     {
         // const
         if (rules.HasConst && value != rules.Const)
@@ -139,8 +137,8 @@ internal static class BytesRuleEvaluator
 
         try
         {
-            var re = new Regex(pattern, RegexOptions.None, RegexTimeout);
-            return re.IsMatch(decoded);
+            // Same RE2 translation as string.pattern; see Re2Pattern.
+            return Re2Pattern.GetRegex(pattern).IsMatch(decoded);
         }
         catch (ArgumentException)
         {
