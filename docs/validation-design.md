@@ -1,34 +1,156 @@
-# protovalidate Design
+# Protobuf validation and CEL
 
-`src/ConnectNet.Validation` provides validation compatible with
-[protovalidate](https://github.com/bufbuild/protovalidate) (`buf/validate/validate.proto`).
-See the [README](../README.md#validation) for usage.
+`ConnectNet.Validation` validates server requests against `buf.validate` rules,
+including custom CEL expressions. It targets .NET 10, independently of the
+.NET Standard 2.1 client and shared RPC types. Validation on Unity is not a
+requirement. The validator and its CEL evaluator are maintained in this repository;
+no external CEL engine is a runtime dependency.
 
-## Scope and approach
+## Public contract
 
-- Reflection-based, no code generation. The engine (`ProtoValidator`) has no Connect dependency and works standalone
-- CEL (Common Expression Language) rules are not implemented: a hand-rolled CEL evaluator would be larger
-  than the library itself
-- Automatic validation via the interceptor (`ValidateInterceptor`) covers unary RPCs only
-- Unsupported rules (CEL, `well_known_regex`, some string/bytes well-known formats) throw
-  `NotSupportedException` when encountered. This fail-loud policy prevents "validated" messages from
-  silently passing unchecked; skipping requires an explicit opt-out via
-  `new ProtoValidator(ignoreUnsupportedRules: true)`
+`ProtoValidator.Validate(IMessage)` returns a `ValidationResult`. Invalid input
+produces violations; invalid schemas or expressions produce a compilation
+exception, and evaluation failures produce a separate evaluation exception.
+An invalid schema must never be treated as valid input or an `InvalidArgument`
+response caused by the caller. Compilation validates rule types, field references,
+overloads, and CEL result types before evaluation, including rules on absent fields.
 
-## Structure
+Existing constructors, `IgnoreUnsupportedRules`, `ValidationResult`, `Violation`,
+and `ValidateInterceptor` remain available. The explicit unsupported-rule opt-out
+only skips an unsupported feature; it must not suppress malformed rules, invalid
+types, compilation failures, or exhausted evaluation budgets.
 
-- `ProtoValidator` — entry point. `Validate(IMessage)` recurses into nested messages and returns every
-  violation as a `ValidationResult` (a list of `Violation`s)
-- `Rules/` — evaluation logic per constraint category (string / numeric / bool / bytes / enum / repeated /
-  map / oneof / well-known types), dispatched by field type through `FieldRuleEvaluator`
-- `Internal/ConstraintCache` — caches parsed rules per `MessageDescriptor` in a `ConcurrentDictionary`
-- `Internal/FieldPaths` — builds violation paths (nesting and indices, e.g. `items[0].name`)
-- `Proto/buf/validate/` — vendored `validate.proto` with protoc-generated code. Rules are read from
-  `FieldDescriptor.GetOptions()` as custom option extensions
+The interceptor validates unary requests and returns `InvalidArgument` with a
+`buf.validate.Violations` detail. Streaming interception is outside this change.
+Standalone validation remains available on the server runtime. `Buf.Validate`
+generated types continue to belong to this assembly so callers do not acquire a
+second, incompatible copy of the extension types.
 
-## Interceptor integration
+## Implementation
 
-`ValidateInterceptor` validates each request and throws a `ConnectException` with
-`ConnectCode.InvalidArgument` on violations. The violation list is attached as a `buf.validate.Violations`
-message in the error details — the same shape as connect-go's `connectrpc.com/validate`, so clients can
-recover typed violation data.
+The CEL evaluator is an internal module of `ConnectNet.Validation`, with no new
+public general-purpose expression API. Its syntax, checking, and evaluation layers
+do not depend on Connect or Protobuf. A Protobuf adapter supplies message types,
+field access and presence, enums, extensions, and well-known types.
+
+The pipeline is source -> lexer -> parser and macro expansion -> typed expression
+-> immutable evaluation plan. Source positions survive macro expansion for
+diagnostics. Compiled plans may be shared across requests; activation values,
+time, cost counters, cancellation, and violations belong to one validation call.
+
+CEL values distinguish signed 64-bit integers, unsigned 64-bit integers, doubles,
+Unicode strings, bytes, booleans, null, lists, maps, objects, types, and errors.
+Arithmetic observes CEL overflow and conversion semantics. Strings count Unicode
+code points. Timestamp and duration arithmetic retains nanosecond precision.
+Equality, numeric comparison, map key lookup, short-circuiting, and error propagation
+follow CEL rather than C# coercion rules. `has()` uses descriptor presence semantics.
+Comprehension macros have lexical bindings that cannot leak into an outer scope.
+
+Regular expressions use RE2 syntax and semantics, including ASCII shorthand
+classes. The existing RE2 translation is the starting point; .NET regex behavior
+alone is not a compatibility oracle. Unsupported syntax fails at compilation.
+
+Descriptors are compiled into message plans. The cache is keyed by descriptor
+identity and does not permanently root dynamically loaded descriptors. Recursive
+message schemas use plan references rather than recursive compilation. The entire
+reachable schema is checked before the first message is evaluated.
+
+## Rule evaluation
+
+Standard rules execute the CEL definitions embedded in `validate.proto`.
+Custom `cel`, `cel_expression`, and predefined extension rules use the same engine.
+The environment binds `this`, `rules`, `rule`, and one `now` captured at the start
+of validation. A rule's message and result are combined according to the pinned
+Protovalidate contract; a false shorthand expression receives its prescribed
+default message.
+
+Structural rules remain descriptor operations: required/presence/ignore,
+message-level and native oneof rules, collection traversal, enum definitions,
+and Any type URL membership. Field and rule paths are structured while evaluating,
+including map key versus value violations. Public textual paths are rendered at
+the API boundary. Error details retain the full structured paths.
+
+Protobuf adaptation covers proto2, proto3 and editions, extension fields, wrappers,
+Any, Struct/Value/ListValue, Timestamp, Duration and FieldMask. Type registries include
+transitive file dependencies. Field numbers, not CLR or JSON spelling, identify
+fields in plans.
+
+## Resource limits
+
+The existing default limits remain: 32 nested messages, 100 materialized violations,
+and 512 characters per stored violation message. Reaching the violation limit stops
+evaluation and marks the result truncated; the interceptor emits its truncation
+marker. Truncation happens before constructing an unbounded diagnostic string.
+
+One validation-wide budget covers CEL operations, comprehension iterations,
+collection traversal, and produced collection/string/byte values. Nested rules
+and repeated elements cannot reset it. Evaluation has a finite default budget and
+supports cancellation. Budget exhaustion is an evaluation failure and never a
+successful or partially successful validation. Parsing and checking also bound
+source size, AST size and nesting before the CLR stack can overflow. Recursive
+object graphs must terminate through a checked limit.
+
+The precise budget units and defaults are part of the evaluator API tests. They
+must allow every bounded official conformance input with default settings while
+rejecting deliberately excessive inputs. No unbounded execution mode is used by
+the server interceptor.
+
+## Verification
+
+The compatibility baselines are immutable upstream revisions:
+
+- CEL: `cel-expr/cel-spec@59505c14f3187e6eb9684fbd3d07146f614c6148`.
+- Protovalidate: `bufbuild/protovalidate@3807e3d1c38b48295eae269e2f3b97cee668edd3`.
+
+Conformance tooling obtains its schemas and test corpus from these upstream
+revisions, with their license notices. It must not use Celly's implementation or
+its expected results. The CEL harness exercises the official suite with the
+environment requested by each test; alternate enum modes are explicit. The
+Protovalidate executor speaks the official binary stdin/stdout harness protocol.
+
+Acceptance requires all of the following, with no ignored failures:
+
+1. Existing RPC unit and integration tests pass; intentional changes to validation
+   assertions correspond to the upstream contract, not weakened assertions.
+2. CEL conformance passes for the pinned corpus, with test counts checked so an
+   empty or partially discovered corpus cannot pass.
+3. All 2,872 pinned Protovalidate cases pass with `--strict_error --strict_message`.
+4. Regression tests cover ASCII regex classes, nanosecond time, numeric boundaries,
+   absent fields, nested map/repeated rules, extension identity and recursive schemas.
+5. Limits and cancellation tests demonstrate bounded violations, traversal,
+   comprehensions, output construction, compilation and diagnostic allocation.
+6. Concurrent validations share plans without sharing request state; separate
+   descriptors with the same full name cannot reuse the wrong schema.
+7. A packed validation package is consumed by a separate .NET 10 smoke application,
+   including a cross-field CEL rule and decoding the interceptor's error detail.
+
+The same pinned conformance commands run in CI, including strict comparisons.
+Unit tests cover each layer as it is introduced rather than relying on the final
+integration suite to discover elementary failures.
+
+## Delivery and replacement
+
+The review units are a dependent series:
+
+1. This design and its acceptance contract.
+2. Server target, lexical analysis, syntax tree, parser and macro expansion.
+3. Type checking, name resolution and diagnostics.
+4. Value model, evaluator, standard operations and functions.
+5. Protobuf type and value adaptation.
+6. Protovalidate functions and RE2 compatibility.
+7. Descriptor plans, standard/custom rule evaluation and interceptor integration.
+8. Remaining conformance differences, resource-boundary verification and CI gates.
+
+Each implementation unit includes its tests. Existing handwritten rule evaluators
+are removed as the CEL-backed validator replaces them; no second production
+validation backend or investigation prototype remains in the final package.
+Public API compatibility does not require retaining nonconforming rule IDs or
+messages. Migration documentation names those observable changes and the server
+runtime requirement.
+
+The release boundary is a green, reviewable PR series. Merging and package
+publication belong to the repository owner. After publication, the package smoke
+application and strict conformance runner are executed against the published
+version, not a project reference. A consumer can roll back by pinning the preceding
+package version; source rollback reverts the implementation series in reverse
+dependency order. No persistent data migration is involved.
