@@ -476,7 +476,7 @@ var validator = new ProtoValidator(ignoreUnsupportedRules: true);
 |---------|--------|-------------|
 | **ConnectNet** | .NET Standard 2.1 | Core library: codecs (`ICodec`, `ProtobufCodec`, `JsonCodec`), errors (`ConnectException`, `ConnectCode`), envelope framing, compression (`GzipCompressor`) |
 | **ConnectNet.Client** | .NET Standard 2.1 | Client library: `ConnectChannel`, `CallOptions`, `ClientStreamCall`, `BidiStreamCall`, `StreamingContent` |
-| **ConnectNet.Validation** | .NET Standard 2.1 | protovalidate: `ProtoValidator`, `ValidateInterceptor` |
+| **ConnectNet.Validation** | .NET 10 | protovalidate: `ProtoValidator`, `ValidateInterceptor` |
 | **ConnectNet.Server** | .NET 10 | Server library: ASP.NET Core integration, unary/streaming handlers, health checks, reflection |
 | **protoc-gen-connect-csharp** | Go | Code generation plugin for `protoc` |
 
