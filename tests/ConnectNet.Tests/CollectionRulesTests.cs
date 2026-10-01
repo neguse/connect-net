@@ -44,7 +44,7 @@ public class CollectionRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "statusMap[1]" && v.ConstraintId == "enum.defined_only");
+            v.FieldPath == "status_map[1]" && v.ConstraintId == "enum.defined_only");
     }
 
     [Fact]
@@ -127,6 +127,6 @@ public class CollectionRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "floatValues" && v.ConstraintId == "repeated.unique");
+            v.FieldPath == "float_values" && v.ConstraintId == "repeated.unique");
     }
 }

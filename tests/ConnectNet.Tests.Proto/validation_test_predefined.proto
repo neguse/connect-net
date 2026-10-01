@@ -1,0 +1,27 @@
+syntax = "proto2";
+
+package validation_test;
+
+option csharp_namespace = "ConnectNet.Tests.Proto";
+
+import "buf/validate/validate.proto";
+
+// Predefined rules: extensions of the standard rule messages carrying their own CEL.
+extend buf.validate.StringRules {
+  optional bool starts_upper = 1001 [(buf.validate.predefined).cel = {
+    id: "string.starts_upper"
+    message: "must start with an upper-case letter"
+    expression: "this == '' || this.substring(0, 1) == this.substring(0, 1).upperAscii()"
+  }];
+  repeated string one_of_prefixes = 1002 [(buf.validate.predefined).cel = {
+    id: "string.one_of_prefixes"
+    expression: "rule.exists(p, this.startsWith(p)) ? '' : 'must start with one of %s'.format([rule])"
+  }];
+}
+
+message PredefinedRulesTestMessage {
+  optional string title = 1 [(buf.validate.field).string.(validation_test.starts_upper) = true];
+  optional string path = 2 [(buf.validate.field).string = {
+    [validation_test.one_of_prefixes]: ["/api", "/v1"]
+  }];
+}

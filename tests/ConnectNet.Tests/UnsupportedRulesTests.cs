@@ -1,72 +1,90 @@
-using System;
 using ConnectNet.Tests.Proto;
 using ConnectNet.Validation;
+using Google.Protobuf.WellKnownTypes;
 using Xunit;
 
 namespace ConnectNet.Tests;
 
+/// <summary>
+/// Rules the handwritten evaluators used to refuse with NotSupportedException are evaluated by
+/// the CEL engine now: custom expressions, Any, FieldMask and every string format.
+/// </summary>
 public class UnsupportedRulesTests
 {
     private readonly ProtoValidator _validator = new();
 
     [Fact]
-    public void FieldLevelCel_Throws()
+    public void FieldLevelCel_IsEvaluated()
     {
-        var ex = Assert.Throws<NotSupportedException>(
-            () => _validator.Validate(new UnsupportedFieldCelMessage { Name = "x" }));
-        Assert.Contains("name", ex.Message);
-        Assert.Contains("cel", ex.Message);
+        var result = _validator.Validate(new UnsupportedFieldCelMessage { Name = "x" });
+
+        Assert.True(result.IsValid);
     }
 
     [Fact]
-    public void MessageLevelCel_Throws()
+    public void MessageLevelCel_IsEvaluated()
     {
-        var ex = Assert.Throws<NotSupportedException>(
-            () => _validator.Validate(new UnsupportedMessageCelMessage { Name = "x" }));
-        Assert.Contains("cel", ex.Message);
+        var result = _validator.Validate(new UnsupportedMessageCelMessage { Name = "x" });
+
+        Assert.True(result.IsValid);
     }
 
     [Fact]
-    public void StringAddress_Throws()
+    public void StringAddress_IsEvaluated()
     {
-        var ex = Assert.Throws<NotSupportedException>(
-            () => _validator.Validate(new UnsupportedStringFormatMessage { Addr = "x" }));
-        Assert.Contains("addr", ex.Message);
-        Assert.Contains("address", ex.Message);
+        Assert.True(_validator.Validate(new UnsupportedStringFormatMessage { Addr = "example.com" }).IsValid);
+        Assert.True(_validator.Validate(new UnsupportedStringFormatMessage { Addr = "::1" }).IsValid);
+
+        var result = _validator.Validate(new UnsupportedStringFormatMessage { Addr = "not an address" });
+
+        Assert.Contains(result.Violations, v => v.FieldPath == "addr" && v.ConstraintId == "string.address");
     }
 
     [Fact]
-    public void AnyRules_Throws()
+    public void AnyRules_AreEvaluated()
     {
-        var ex = Assert.Throws<NotSupportedException>(
-            () => _validator.Validate(new UnsupportedAnyMessage()));
-        Assert.Contains("any", ex.Message);
+        var allowed = new UnsupportedAnyMessage { Value = new Any { TypeUrl = "type.googleapis.com/foo" } };
+        Assert.True(_validator.Validate(allowed).IsValid);
+
+        var result = _validator.Validate(new UnsupportedAnyMessage { Value = new Any { TypeUrl = "type.googleapis.com/bar" } });
+
+        Assert.Contains(result.Violations, v =>
+            v.FieldPath == "value" && v.ConstraintId == "any.in" && v.Message == "type URL must be in the allow list");
     }
 
     [Fact]
-    public void FieldMaskRules_Throws()
+    public void FieldMaskRules_AreEvaluated()
     {
-        var ex = Assert.Throws<NotSupportedException>(
-            () => _validator.Validate(new UnsupportedFieldMaskMessage()));
-        Assert.Contains("field_mask", ex.Message);
+        var mask = new FieldMask();
+        mask.Paths.Add("name");
+        Assert.True(_validator.Validate(new UnsupportedFieldMaskMessage { Mask = mask }).IsValid);
+
+        mask.Paths.Add("secret");
+        var result = _validator.Validate(new UnsupportedFieldMaskMessage { Mask = mask });
+
+        Assert.Contains(result.Violations, v => v.FieldPath == "mask" && v.ConstraintId == "field_mask.not_in");
     }
 
     [Fact]
-    public void NestedItemsUnsupportedRule_Throws()
+    public void NestedItemsRule_IsEvaluated()
     {
-        var ex = Assert.Throws<NotSupportedException>(
-            () => _validator.Validate(new UnsupportedNestedItemsMessage()));
-        Assert.Contains("ulid", ex.Message);
+        var msg = new UnsupportedNestedItemsMessage();
+        msg.Ids.Add("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        msg.Ids.Add("not-a-ulid");
+
+        var result = _validator.Validate(msg);
+
+        Assert.Single(result.Violations);
+        Assert.Contains(result.Violations, v => v.FieldPath == "ids[1]" && v.ConstraintId == "string.ulid");
     }
 
     [Fact]
-    public void OptOut_IgnoreUnsupportedRules_DoesNotThrow()
+    public void IgnoreUnsupportedRules_IsRetainedAsAFlag()
     {
         var permissive = new ProtoValidator(ignoreUnsupportedRules: true);
 
-        var result = permissive.Validate(new UnsupportedFieldCelMessage { Name = "x" });
-
-        Assert.True(result.IsValid);
+        Assert.True(permissive.IgnoreUnsupportedRules);
+        Assert.True(permissive.Validate(new UnsupportedFieldCelMessage { Name = "x" }).IsValid);
     }
 
     [Fact]

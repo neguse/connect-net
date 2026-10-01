@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The executor of the official Protovalidate conformance suite. The Go runner
+    (tools/protovalidate-conformance at the pinned revision) feeds a TestConformanceRequest on
+    stdin and reads a TestConformanceResponse from stdout; see run.sh.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.*" />
+    <PackageReference Include="Grpc.Tools" Version="2.*" PrivateAssets="All" />
+    <Protobuf Include="proto/**/*.proto" ProtoRoot="proto" GrpcServices="None" AdditionalImportDirs="../../src/ConnectNet.Validation/Proto" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ConnectNet.Validation/ConnectNet.Validation.csproj" />
+  </ItemGroup>
+</Project>

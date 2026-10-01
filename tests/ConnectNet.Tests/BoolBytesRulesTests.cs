@@ -28,7 +28,7 @@ public class BoolBytesRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "mustBeTrue" &&
+            v.FieldPath == "must_be_true" &&
             v.ConstraintId == "bool.const" &&
             v.Message.Contains("true"));
     }

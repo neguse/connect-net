@@ -22,7 +22,7 @@ public class WktRuleConformanceTests
     {
         var msg = new WktRulesTestMessage { ConstTs = Ts(1000) };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "constTs");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "const_ts");
     }
 
     [Fact]
@@ -31,7 +31,7 @@ public class WktRuleConformanceTests
         var msg = new WktRulesTestMessage { ConstTs = Ts(999) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "constTs" && v.ConstraintId == "timestamp.const");
+            v.FieldPath == "const_ts" && v.ConstraintId == "timestamp.const");
     }
 
     // --- timestamp.lt_now / gt_now ---
@@ -41,7 +41,7 @@ public class WktRuleConformanceTests
     {
         var msg = new WktRulesTestMessage { LtNowTs = NowOffset(TimeSpan.FromHours(-1)) };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "ltNowTs");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "lt_now_ts");
     }
 
     [Fact]
@@ -50,7 +50,7 @@ public class WktRuleConformanceTests
         var msg = new WktRulesTestMessage { LtNowTs = NowOffset(TimeSpan.FromHours(1)) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "ltNowTs" && v.ConstraintId == "timestamp.lt_now");
+            v.FieldPath == "lt_now_ts" && v.ConstraintId == "timestamp.lt_now");
     }
 
     [Fact]
@@ -58,7 +58,7 @@ public class WktRuleConformanceTests
     {
         var msg = new WktRulesTestMessage { GtNowTs = NowOffset(TimeSpan.FromHours(1)) };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "gtNowTs");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "gt_now_ts");
     }
 
     [Fact]
@@ -67,7 +67,7 @@ public class WktRuleConformanceTests
         var msg = new WktRulesTestMessage { GtNowTs = NowOffset(TimeSpan.FromHours(-1)) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "gtNowTs" && v.ConstraintId == "timestamp.gt_now");
+            v.FieldPath == "gt_now_ts" && v.ConstraintId == "timestamp.gt_now");
     }
 
     // --- timestamp.within ---
@@ -77,7 +77,7 @@ public class WktRuleConformanceTests
     {
         var msg = new WktRulesTestMessage { WithinTs = NowOffset(TimeSpan.FromMinutes(-5)) };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "withinTs");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "within_ts");
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public class WktRuleConformanceTests
         var msg = new WktRulesTestMessage { WithinTs = NowOffset(TimeSpan.FromHours(-2)) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "withinTs" && v.ConstraintId == "timestamp.within");
+            v.FieldPath == "within_ts" && v.ConstraintId == "timestamp.within");
     }
 
     [Fact]
@@ -95,7 +95,7 @@ public class WktRuleConformanceTests
         var msg = new WktRulesTestMessage { WithinTs = NowOffset(TimeSpan.FromHours(2)) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "withinTs" && v.ConstraintId == "timestamp.within");
+            v.FieldPath == "within_ts" && v.ConstraintId == "timestamp.within");
     }
 
     // --- timestamp reversed range: gt:1000, lt:500 → outside [500,1000] ---
@@ -105,11 +105,11 @@ public class WktRuleConformanceTests
     {
         var msg = new WktRulesTestMessage { RangeTs = Ts(1200) };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "rangeTs");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "range_ts");
 
         msg = new WktRulesTestMessage { RangeTs = Ts(100) };
         result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "rangeTs");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "range_ts");
     }
 
     [Fact]
@@ -118,7 +118,7 @@ public class WktRuleConformanceTests
         var msg = new WktRulesTestMessage { RangeTs = Ts(700) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "rangeTs" && v.ConstraintId == "timestamp.gt_lt_exclusive");
+            v.FieldPath == "range_ts" && v.ConstraintId == "timestamp.gt_lt_exclusive");
     }
 
     // --- duration.const / in / not_in ---
@@ -128,7 +128,7 @@ public class WktRuleConformanceTests
     {
         var msg = new WktRulesTestMessage { ConstDur = Dur(5) };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "constDur");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "const_dur");
     }
 
     [Fact]
@@ -137,7 +137,7 @@ public class WktRuleConformanceTests
         var msg = new WktRulesTestMessage { ConstDur = Dur(4) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "constDur" && v.ConstraintId == "duration.const");
+            v.FieldPath == "const_dur" && v.ConstraintId == "duration.const");
     }
 
     [Fact]
@@ -145,7 +145,7 @@ public class WktRuleConformanceTests
     {
         var msg = new WktRulesTestMessage { InDur = Dur(1) };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "inDur");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "in_dur");
     }
 
     [Fact]
@@ -154,7 +154,7 @@ public class WktRuleConformanceTests
         var msg = new WktRulesTestMessage { InDur = Dur(3) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "inDur" && v.ConstraintId == "duration.in");
+            v.FieldPath == "in_dur" && v.ConstraintId == "duration.in");
     }
 
     [Fact]
@@ -163,7 +163,7 @@ public class WktRuleConformanceTests
         var msg = new WktRulesTestMessage { NotInDur = Dur(3) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "notInDur" && v.ConstraintId == "duration.not_in");
+            v.FieldPath == "not_in_dur" && v.ConstraintId == "duration.not_in");
     }
 
     [Fact]
@@ -171,7 +171,7 @@ public class WktRuleConformanceTests
     {
         var msg = new WktRulesTestMessage { NotInDur = Dur(4) };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "notInDur");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "not_in_dur");
     }
 
     // --- duration reversed range: gt:10, lt:5 ---
@@ -182,7 +182,7 @@ public class WktRuleConformanceTests
         var msg = new WktRulesTestMessage { RangeDur = Dur(7) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "rangeDur" && v.ConstraintId == "duration.gt_lt_exclusive");
+            v.FieldPath == "range_dur" && v.ConstraintId == "duration.gt_lt_exclusive");
     }
 
     [Fact]
@@ -190,7 +190,7 @@ public class WktRuleConformanceTests
     {
         var msg = new WktRulesTestMessage { RangeDur = Dur(12) };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "rangeDur");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "range_dur");
     }
 
     // --- unset presence-tracked WKT fields are skipped ---

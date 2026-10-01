@@ -131,6 +131,9 @@ internal sealed class ProtoTypeProvider : TypeProvider, IMessageFactoryProvider
         return SingularType(field);
     }
 
+    /// <summary>The CEL type of one element of a field: a repeated item, a map key or value, or a singular value.</summary>
+    public CelType ElementType(FieldDescriptor field) => SingularType(field);
+
     private CelType SingularType(FieldDescriptor field)
     {
         switch (field.FieldType)
