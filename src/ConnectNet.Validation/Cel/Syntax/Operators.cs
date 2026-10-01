@@ -9,7 +9,7 @@ internal static class Operators
     public const string LogicalAnd = "_&&_";
     public const string LogicalOr = "_||_";
     public const string LogicalNot = "!_";
-    public const string Equals = "_==_";
+    public const string EqualsOp = "_==_";
     public const string NotEquals = "_!=_";
     public const string Less = "_<_";
     public const string LessEquals = "_<=_";
@@ -33,7 +33,7 @@ internal static class Operators
         [LogicalAnd] = "&&",
         [LogicalOr] = "||",
         [LogicalNot] = "!",
-        [Equals] = "==",
+        [EqualsOp] = "==",
         [NotEquals] = "!=",
         [Less] = "<",
         [LessEquals] = "<=",
@@ -55,7 +55,7 @@ internal static class Operators
         ["<="] = LessEquals,
         [">"] = Greater,
         [">="] = GreaterEquals,
-        ["=="] = Equals,
+        ["=="] = EqualsOp,
         ["!="] = NotEquals,
         ["in"] = In,
         ["+"] = Add,

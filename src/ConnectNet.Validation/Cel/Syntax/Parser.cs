@@ -315,7 +315,7 @@ internal sealed class Parser
                 TokenKind.LessEquals => Operators.LessEquals,
                 TokenKind.Greater => Operators.Greater,
                 TokenKind.GreaterEquals => Operators.GreaterEquals,
-                TokenKind.Equals => Operators.Equals,
+                TokenKind.Equals => Operators.EqualsOp,
                 TokenKind.NotEquals => Operators.NotEquals,
                 TokenKind.In => Operators.In,
                 _ => null,
