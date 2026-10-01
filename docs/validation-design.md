@@ -108,12 +108,34 @@ its expected results. The CEL harness exercises the official suite with the
 environment requested by each test; alternate enum modes are explicit. The
 Protovalidate executor speaks the official binary stdin/stdout harness protocol.
 
+The CEL corpus is the `tests/simple/testdata` suite of the pinned cel-spec
+revision. Its scope follows the environment Protovalidate defines for every
+implementation: the CEL standard library, the strings extension (including
+`format`, which renders every standard rule message), the Protovalidate
+functions, UTC as the default time zone, and cross-type numeric comparisons.
+No optional types, bindings, math, encoders, protos, lists or sets extension is
+enabled, so the suites that exercise only those are outside the contract.
+
+- Required, every case: `basic`, `comparisons`, `conversions`, `dynamic`,
+  `enums`, `fields`, `fp_math`, `integer_math`, `lists`, `logic`, `macros`,
+  `macros2`, `namespace`, `parse`, `plumbing`, `proto2`, `proto3`, `string`,
+  `string_ext`, `timestamps`, `wrappers` (2,003 cases at the pinned revision).
+- Excluded: `bindings_ext`, `block_ext`, `encoders_ext`, `math_ext`,
+  `network_ext`, `optionals`, `proto2_ext`, `unknowns`.
+- Reported but not gating: `type_deduction`. Protovalidate only needs the
+  checker to accept or reject an expression and to know its result type.
+
+A required file is run in full. Skipping individual cases inside a required
+file is not permitted; a case that cannot pass is a defect to fix or a
+documented deviation agreed before merge, never an entry in an ignore list.
+
 Acceptance requires all of the following, with no ignored failures:
 
 1. Existing RPC unit and integration tests pass; intentional changes to validation
    assertions correspond to the upstream contract, not weakened assertions.
-2. CEL conformance passes for the pinned corpus, with test counts checked so an
-   empty or partially discovered corpus cannot pass.
+2. CEL conformance passes for every required file of the pinned corpus, with
+   per-file test counts checked so an empty or partially discovered corpus
+   cannot pass.
 3. All 2,872 pinned Protovalidate cases pass with `--strict_error --strict_message`.
 4. Regression tests cover ASCII regex classes, nanosecond time, numeric boundaries,
    absent fields, nested map/repeated rules, extension identity and recursive schemas.
