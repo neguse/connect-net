@@ -118,10 +118,11 @@ enabled, so the suites that exercise only those are outside the contract.
 
 - Required, every case: `basic`, `comparisons`, `conversions`, `dynamic`,
   `enums`, `fields`, `fp_math`, `integer_math`, `lists`, `logic`, `macros`,
-  `macros2`, `namespace`, `parse`, `plumbing`, `proto2`, `proto3`, `string`,
-  `string_ext`, `timestamps`, `wrappers` (2,003 cases at the pinned revision).
-- Excluded: `bindings_ext`, `block_ext`, `encoders_ext`, `math_ext`,
-  `network_ext`, `optionals`, `proto2_ext`, `unknowns`.
+  `namespace`, `parse`, `plumbing`, `proto2`, `proto3`, `string`,
+  `string_ext`, `timestamps`, `wrappers` (1,957 cases at the pinned revision).
+- Excluded: `bindings_ext`, `block_ext`, `encoders_ext`, `macros2` (the
+  two-variable comprehension extension), `math_ext`, `network_ext`,
+  `optionals`, `proto2_ext`, `unknowns`.
 - Reported but not gating: `type_deduction`. Protovalidate only needs the
   checker to accept or reject an expression and to know its result type.
 
