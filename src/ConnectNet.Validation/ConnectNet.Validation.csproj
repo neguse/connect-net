@@ -13,6 +13,8 @@
     <PackageReference Include="Google.Protobuf" Version="3.*" />
     <PackageReference Include="Grpc.Tools" Version="2.*" PrivateAssets="All" />
     <Protobuf Include="Proto/buf/validate/validate.proto" GrpcServices="None" AdditionalImportDirs="Proto" />
+    <!-- Ship validate.proto so consumers can import it: AdditionalImportDirs="$(PkgConnectNet_Validation)/protos". -->
+    <None Include="Proto/**/*.proto" Pack="true" PackagePath="protos" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../ConnectNet/ConnectNet.csproj" />

@@ -12,3 +12,6 @@ BenchmarkDotNet.Artifacts/
 
 # Build artifact of the protoc plugin
 /tools/protoc-gen-connect-csharp/protoc-gen-connect-csharp
+
+# Packages produced for the package smoke test
+/artifacts/
