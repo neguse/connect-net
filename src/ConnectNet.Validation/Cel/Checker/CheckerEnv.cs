@@ -96,8 +96,8 @@ internal sealed class CheckerEnv
         var type = Provider.FindType(candidate);
         if (type != null)
             return new VariableDecl(candidate, CelType.TypeOf(type));
-        if (Provider.TryFindEnumValue(candidate, out var enumValue))
-            return new VariableDecl(candidate, CelType.Int, enumValue);
+        if (Provider.TryFindEnumConstant(candidate, out var enumType, out var enumConstant))
+            return new VariableDecl(candidate, enumType, enumConstant);
         return null;
     }
 

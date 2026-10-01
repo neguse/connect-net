@@ -453,7 +453,10 @@ internal sealed class Checker
             return e;
         }
 
+        // The tree keeps the resolved message name (a FloatValue stays a FloatValue even though
+        // its CEL type is the double wrapper); the well-known name only serves field lookups.
         var typeName = ident.Name;
+        var fieldLookupName = typeName;
         SetReference(e, Reference.Ident(typeName));
         var resultType = CelType.Error;
         if (ident.Type.Kind == TypeKind.Type && ident.Type.Parameters.Count == 1)
@@ -462,11 +465,11 @@ internal sealed class Checker
             var wellKnown = resultType.WellKnownMessageName;
             if (wellKnown != null)
             {
-                typeName = wellKnown;
+                fieldLookupName = _env.Provider.HasMessage(typeName) ? typeName : wellKnown;
             }
             else if (resultType.Kind == TypeKind.Struct)
             {
-                typeName = resultType.Name;
+                fieldLookupName = resultType.Name;
             }
             else
             {
@@ -486,7 +489,7 @@ internal sealed class Checker
             var entry = e.Entries[i];
             var value = CheckExpr(entry.Value);
             entries[i] = new FieldEntry(entry.Id, entry.Field, value);
-            var fieldType = resultType.Kind == TypeKind.Error ? CelType.Error : LookupFieldType(entry.Id, typeName, entry.Field) ?? CelType.Error;
+            var fieldType = resultType.Kind == TypeKind.Error ? CelType.Error : LookupFieldType(entry.Id, fieldLookupName, entry.Field) ?? CelType.Error;
             var valueType = GetType(value);
             if (!IsAssignable(fieldType, valueType))
             {

@@ -40,6 +40,15 @@ internal sealed class CelEnvironment
         _messageFactories = messageFactories;
         CheckerOptions = checkerOptions ?? CheckerOptions.Default;
         ParserOptions = parserOptions ?? ParserOptions.Default;
+        if (Provider is Protobuf.ProtoTypeProvider proto)
+        {
+            foreach (var (decl, fn) in proto.EnumFunctions())
+            {
+                _functionDecls.Add(decl);
+                if (fn.Name != Checker.FunctionNames.Int)
+                    _functions.Add(fn);
+            }
+        }
     }
 
     public Container Container { get; }

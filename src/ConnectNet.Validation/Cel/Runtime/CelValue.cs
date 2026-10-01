@@ -563,6 +563,27 @@ internal abstract class MessageValue : CelValue
     public abstract CelValue HasField(string name);
 }
 
+/// <summary>A strongly typed protobuf enum value (only with the strong enum mode).</summary>
+internal sealed class EnumValue : CelValue
+{
+    public EnumValue(string enumTypeName, int number)
+    {
+        EnumTypeName = enumTypeName;
+        Number = number;
+    }
+
+    public string EnumTypeName { get; }
+
+    public int Number { get; }
+
+    public override string TypeName => EnumTypeName;
+
+    public override bool EqualsValue(CelValue other) =>
+        other is EnumValue e && e.Number == Number && string.Equals(e.EnumTypeName, EnumTypeName, StringComparison.Ordinal);
+
+    public override string ToString() => EnumTypeName + "(" + Number.ToString(CultureInfo.InvariantCulture) + ")";
+}
+
 /// <summary>Numeric helpers shared by comparison, equality and conversion.</summary>
 internal static class Numeric
 {

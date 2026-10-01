@@ -458,6 +458,8 @@ internal static class StandardFunctions
                 return IntValue.Of(t.Seconds);
             case DurationValue dur:
                 return IntValue.Of(dur.Nanoseconds);
+            case EnumValue e:
+                return IntValue.Of(e.Number);
             default:
                 return ErrorValue.NoSuchOverload(FunctionNames.Int, a[0]);
         }
