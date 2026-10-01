@@ -119,7 +119,7 @@ enabled, so the suites that exercise only those are outside the contract.
 - Required, every case: `basic`, `comparisons`, `conversions`, `dynamic`,
   `enums`, `fields`, `fp_math`, `integer_math`, `lists`, `logic`, `macros`,
   `namespace`, `parse`, `plumbing`, `proto2`, `proto3`, `string`,
-  `string_ext`, `timestamps`, `wrappers` (1,957 cases at the pinned revision).
+  `string_ext`, `timestamps`, `wrappers` (1,958 cases at the pinned revision).
 - Excluded: `bindings_ext`, `block_ext`, `encoders_ext`, `macros2` (the
   two-variable comprehension extension), `math_ext`, `network_ext`,
   `optionals`, `proto2_ext`, `unknowns`.

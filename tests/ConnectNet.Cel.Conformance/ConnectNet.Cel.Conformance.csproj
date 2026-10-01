@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>ConnectNet.Cel.Conformance</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.*" />
+    <PackageReference Include="Grpc.Tools" Version="2.*" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageReference Include="xunit" Version="2.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Schemas of the pinned cel-spec revision (see testdata/REVISION); google/rpc/status.proto from googleapis. -->
+    <Protobuf Include="proto/**/*.proto" ProtoRoot="proto" GrpcServices="None" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="testdata/*.textproto" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ConnectNet.Validation/ConnectNet.Validation.csproj" />
+  </ItemGroup>
+</Project>

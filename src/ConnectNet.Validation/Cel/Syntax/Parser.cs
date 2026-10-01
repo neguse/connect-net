@@ -424,6 +424,8 @@ internal sealed class Parser
                 var name = ExpectSelector();
                 if (Current.Kind == TokenKind.LParen)
                 {
+                    if (name.Kind == TokenKind.EscapedIdent)
+                        throw new SyntaxException(Unexpected(Current), Current.Start);
                     var paren = Advance();
                     var args = ParseExprList(TokenKind.RParen);
                     Expect(TokenKind.RParen, "')'");
@@ -448,13 +450,13 @@ internal sealed class Parser
         }
     }
 
-    private Token ExpectSelector()
+    // Reserved words are rejected only as identifiers and global function names; they are
+    // permitted as selectors, member function names, message names and field names.
+    private Token ExpectSelector(bool allowEscaped = true)
     {
         var tok = Current;
-        if (tok.Kind == TokenKind.Ident)
+        if (tok.Kind is TokenKind.Ident or TokenKind.Reserved || (allowEscaped && tok.Kind == TokenKind.EscapedIdent))
             return Advance();
-        if (tok.Kind == TokenKind.Reserved)
-            throw new SyntaxException($"reserved identifier: {tok.Text}", tok.Start);
         throw new SyntaxException($"{Unexpected(tok)}, expecting IDENTIFIER", tok.Start);
     }
 
@@ -638,10 +640,7 @@ internal sealed class Parser
         var names = new List<string>();
         while (true)
         {
-            var tok = Current;
-            if (tok.Kind == TokenKind.Reserved)
-                throw new SyntaxException($"reserved identifier: {tok.Text}", tok.Start);
-            Expect(TokenKind.Ident, "IDENTIFIER");
+            var tok = ExpectSelector(allowEscaped: false);
             names.Add(tok.Text);
             if (!Accept(TokenKind.Dot))
                 break;
@@ -651,10 +650,7 @@ internal sealed class Parser
         var entries = new List<FieldEntry>();
         while (Current.Kind != TokenKind.RBrace)
         {
-            var fieldTok = Current;
-            if (fieldTok.Kind == TokenKind.Reserved)
-                throw new SyntaxException($"reserved identifier: {fieldTok.Text}", fieldTok.Start);
-            Expect(TokenKind.Ident, "IDENTIFIER");
+            var fieldTok = ExpectSelector();
             var colon = Expect(TokenKind.Colon, "':'");
             var value = ParseExpr();
             entries.Add(new FieldEntry(NextId(colon.Start), fieldTok.Text, value));
