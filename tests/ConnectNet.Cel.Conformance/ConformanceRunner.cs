@@ -7,6 +7,7 @@ using Cel.Expr;
 using Cel.Expr.Conformance.Test;
 using ConnectNet.Validation.Cel;
 using ConnectNet.Validation.Cel.Checker;
+using ConnectNet.Validation.Cel.Protobuf;
 using ConnectNet.Validation.Cel.Runtime;
 using ConnectNet.Validation.Cel.Syntax;
 using Google.Protobuf;
@@ -110,8 +111,8 @@ internal static class ConformanceRunner
         return TextProtoParser.Parse<SimpleTestFile>(text, Registry, Files);
     }
 
-    /// <summary>Hook for the Protobuf adaptation: supplies the provider and message factories for the test messages.</summary>
-    public static Func<(TypeProvider Provider, IMessageFactoryProvider? Factories)>? ProtoSupport { get; set; }
+    private static readonly ProtoTypeProvider LegacyProvider = new(Files, EnumMode.Legacy);
+    private static readonly ProtoTypeProvider StrongProvider = new(Files, EnumMode.Strong);
 
     public static FileResult Run(string file, Func<string, bool>? filter = null)
     {
@@ -128,7 +129,9 @@ internal static class ConformanceRunner
                 bool passed;
                 try
                 {
-                    passed = RunCase(test, out detail);
+                    // The strong enum sections are explicit about their mode, as the design requires.
+                    var provider = section.Name.StartsWith("strong_", StringComparison.Ordinal) ? StrongProvider : LegacyProvider;
+                    passed = RunCase(test, provider, out detail);
                 }
                 catch (Exception e)
                 {
@@ -141,11 +144,10 @@ internal static class ConformanceRunner
         return new FileResult(file, results);
     }
 
-    private static bool RunCase(SimpleTest test, out string detail)
+    private static bool RunCase(SimpleTest test, ProtoTypeProvider provider, out string detail)
     {
-        var (provider, factories) = ProtoSupport?.Invoke() ?? (EmptyTypeProvider.Instance, null);
         var parserOptions = new ParserOptions { Macros = test.DisableMacros ? Array.Empty<Macro>() : StandardMacros.All_ };
-        var env = new CelEnvironment(new Container(test.Container), provider, factories, parserOptions: parserOptions)
+        var env = new CelEnvironment(new Container(test.Container), provider, provider, parserOptions: parserOptions)
             .AddStandardLibrary()
             .AddStringsExtension();
         foreach (var decl in test.TypeEnv)
@@ -153,7 +155,7 @@ internal static class ConformanceRunner
 
         var parsed = env.Parse(test.Expr);
         if (!parsed.IsSuccess)
-            return Expect(test, null, "parse error: " + parsed.Errors.FormatAll(), out detail);
+            return Expect(test, null, "parse error: " + parsed.Errors.FormatAll(), provider, out detail);
 
         CelProgram program;
         CelType? deducedType = null;
@@ -165,7 +167,7 @@ internal static class ConformanceRunner
         {
             var checked_ = env.Check(parsed);
             if (!checked_.IsSuccess)
-                return Expect(test, null, "check error: " + checked_.Errors.FormatAll(), out detail);
+                return Expect(test, null, "check error: " + checked_.Errors.FormatAll(), provider, out detail);
             deducedType = checked_.ResultType;
             if (test.CheckOnly)
                 return ExpectType(test, deducedType, out detail);
@@ -176,7 +178,7 @@ internal static class ConformanceRunner
         foreach (var binding in test.Bindings)
         {
             var value = binding.Value.KindCase == ExprValue.KindOneofCase.Value
-                ? ToCelValue(binding.Value.Value)
+                ? ToCelValue(binding.Value.Value, provider)
                 : new ErrorValue("binding is not a value");
             bindings[binding.Key] = value;
         }
@@ -195,7 +197,7 @@ internal static class ConformanceRunner
             if (!ExpectType(test, deducedType, out detail))
                 return false;
         }
-        return Expect(test, result, null, out detail);
+        return Expect(test, result, null, provider, out detail);
     }
 
     private static bool ExpectType(SimpleTest test, CelType deduced, out string detail)
@@ -211,7 +213,7 @@ internal static class ConformanceRunner
         return expected == actual;
     }
 
-    private static bool Expect(SimpleTest test, CelValue? result, string? failure, out string detail)
+    private static bool Expect(SimpleTest test, CelValue? result, string? failure, ProtoTypeProvider provider, out string detail)
     {
         bool isError = result == null || result.IsError;
         string actual = failure ?? result!.ToString();
@@ -240,7 +242,7 @@ internal static class ConformanceRunner
                     detail = "expected " + expectedProto + ", got " + actual;
                     return false;
                 }
-                var expected = ToCelValue(expectedProto);
+                var expected = ToCelValue(expectedProto, provider);
                 bool ok = StrictEquals(expected, result!);
                 detail = ok ? "ok" : "expected " + expected + ", got " + actual;
                 return ok;
@@ -328,10 +330,7 @@ internal static class ConformanceRunner
 
     // ---- values ----
 
-    /// <summary>Hook for the Protobuf adaptation: converts a packed message into a CEL value.</summary>
-    public static Func<Wkt.Any, CelValue>? AnyToValue { get; set; }
-
-    public static CelValue ToCelValue(Value v)
+    public static CelValue ToCelValue(Value v, ProtoTypeProvider provider)
     {
         switch (v.KindCase)
         {
@@ -350,18 +349,23 @@ internal static class ConformanceRunner
             case Value.KindOneofCase.BytesValue:
                 return new Rt.BytesValue(v.BytesValue.ToByteArray());
             case Value.KindOneofCase.EnumValue:
-                return IntValue.Of(v.EnumValue.Value);
+                return new Rt.EnumValue(v.EnumValue.Type, (int)v.EnumValue.Value);
             case Value.KindOneofCase.ObjectValue:
-                return AnyToValue != null ? AnyToValue(v.ObjectValue) : new ErrorValue("object values need the Protobuf adaptation");
+            {
+                var unpacked = ProtoValues.TryUnpack(provider, v.ObjectValue);
+                return unpacked == null
+                    ? new ErrorValue("unknown object type " + v.ObjectValue.TypeUrl)
+                    : provider.ToCelValue(unpacked);
+            }
             case Value.KindOneofCase.MapValue:
             {
                 var entries = v.MapValue.Entries
-                    .Select(e => new KeyValuePair<CelValue, CelValue>(ToCelValue(e.Key), ToCelValue(e.Value)))
+                    .Select(e => new KeyValuePair<CelValue, CelValue>(ToCelValue(e.Key, provider), ToCelValue(e.Value, provider)))
                     .ToArray();
                 return Rt.MapValue.Create(entries);
             }
             case Value.KindOneofCase.ListValue:
-                return new Rt.ListValue(v.ListValue.Values.Select(ToCelValue).ToArray());
+                return new Rt.ListValue(v.ListValue.Values.Select(x => ToCelValue(x, provider)).ToArray());
             case Value.KindOneofCase.TypeValue:
                 return new TypeValue(v.TypeValue);
             default:
@@ -369,8 +373,6 @@ internal static class ConformanceRunner
         }
     }
 
-    /// <summary>Hook for the Protobuf adaptation: proto equality of two message values.</summary>
-    public static Func<CelValue, CelValue, bool?>? MessageEquals { get; set; }
 
     /// <summary>Exact equality: same runtime type and value; NaN equals NaN; maps are order-agnostic.</summary>
     public static bool StrictEquals(CelValue expected, CelValue actual)
@@ -411,7 +413,7 @@ internal static class ConformanceRunner
                 return true;
             }
             case MessageValue:
-                return MessageEquals?.Invoke(expected, actual) ?? false;
+                return expected.EqualsValue(actual);
             default:
                 return expected.GetType() == actual.GetType() && expected.EqualsValue(actual);
         }

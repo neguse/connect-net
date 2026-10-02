@@ -99,9 +99,9 @@ internal sealed class GlobalVarNode : Interpretable
             value = TypeValue.Of(type);
             return true;
         }
-        if (provider.TryFindEnumValue(name, out var enumValue))
+        if (provider.TryFindEnumConstant(name, out _, out var enumConstant))
         {
-            value = IntValue.Of(enumValue);
+            value = enumConstant is CelValue cv ? cv : IntValue.Of((long)enumConstant);
             return true;
         }
         value = null!;

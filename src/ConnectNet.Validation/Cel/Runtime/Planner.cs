@@ -146,6 +146,8 @@ internal sealed class Planner
         {
             if (reference.ConstantValue is long constant)
                 return new ConstNode(ident.Id, IntValue.Of(constant));
+            if (reference.ConstantValue is CelValue constantValue)
+                return new ConstNode(ident.Id, constantValue);
             return new GlobalVarNode(ident.Id, new[] { reference.Name.TrimStart('.') }, _provider);
         }
         return new GlobalVarNode(ident.Id, _container.ResolveCandidateNames(ident.Name), _provider);
@@ -157,6 +159,8 @@ internal sealed class Planner
         {
             if (reference.ConstantValue is long constant)
                 return new ConstNode(sel.Id, IntValue.Of(constant));
+            if (reference.ConstantValue is CelValue constantValue)
+                return new ConstNode(sel.Id, constantValue);
             return new GlobalVarNode(sel.Id, new[] { reference.Name.TrimStart('.') }, _provider);
         }
 

@@ -163,6 +163,23 @@ internal abstract class TypeProvider
 
     /// <summary>The integer value of a fully qualified enum value name (<c>pkg.Enum.VALUE</c>).</summary>
     public abstract bool TryFindEnumValue(string fullName, out long value);
+
+    /// <summary>
+    /// The declared type and compile-time constant of an enum value name. By default enums are
+    /// ints; a provider with strongly typed enums returns the enum type and an enum constant.
+    /// </summary>
+    public virtual bool TryFindEnumConstant(string fullName, out CelType type, out object constant)
+    {
+        if (TryFindEnumValue(fullName, out var value))
+        {
+            type = CelType.Int;
+            constant = value;
+            return true;
+        }
+        type = CelType.Error;
+        constant = null!;
+        return false;
+    }
 }
 
 /// <summary>A provider that knows no messages; the well-known types still resolve.</summary>

@@ -27,15 +27,6 @@ public class ConformanceTests
     public static IEnumerable<object[]> RequiredFiles() =>
         ConformanceRunner.ExpectedCounts.Keys.Select(f => new object[] { f });
 
-    /// <summary>
-    /// Files with cases that construct or read protobuf messages. They become gating with the
-    /// Protobuf adaptation unit of the series; until then they are run and reported only.
-    /// </summary>
-    private static readonly HashSet<string> AwaitingProtobufAdaptation = new()
-    {
-        "comparisons", "dynamic", "enums", "parse", "proto2", "proto3", "timestamps", "wrappers",
-    };
-
     [Theory]
     [MemberData(nameof(RequiredFiles))]
     public void RequiredFilePasses(string file)
@@ -43,8 +34,6 @@ public class ConformanceTests
         var result = ConformanceRunner.Run(file);
         Report(result);
         Assert.Equal(ConformanceRunner.ExpectedCounts[file], result.Total);
-        if (AwaitingProtobufAdaptation.Contains(file))
-            return;
         Assert.True(result.Failures.Any() == false, ConformanceRunner.Summarize(result));
     }
 
