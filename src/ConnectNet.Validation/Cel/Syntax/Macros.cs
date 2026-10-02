@@ -131,7 +131,7 @@ internal static class StandardMacros
                 condition = helper.Bool(true);
                 step = helper.Call(Operators.Conditional, args[1],
                     helper.Call(Operators.Add, helper.AccuIdent(), helper.Int(1)), helper.AccuIdent());
-                result = helper.Call(Operators.Equals, helper.AccuIdent(), helper.Int(1));
+                result = helper.Call(Operators.EqualsOp, helper.AccuIdent(), helper.Int(1));
                 break;
         }
         return helper.Comprehension(target, v, MacroExprHelper.AccumulatorName, init, condition, step, result);
