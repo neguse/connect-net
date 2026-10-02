@@ -40,6 +40,20 @@ jobs:
       - name: Go interop tests
         run: dotnet test tests/ConnectNet.IntegrationTests --no-build
 
+      # The CEL engine against the pinned cel-spec corpus (every required file, per-file
+      # case counts checked) and the validator against the pinned Protovalidate suite
+      # (all cases, strict error and message comparison). See docs/validation-design.md.
+      - name: CEL conformance
+        run: dotnet test tests/ConnectNet.Cel.Conformance --no-build
+
+      - name: Protovalidate conformance
+        run: CONFIGURATION=Debug tests/ConnectNet.Protovalidate.Conformance/run.sh
+
+      # Consumes the packed ConnectNet.Validation package from a separate application:
+      # a cross-field CEL rule, the interceptor, and decoding of its error detail.
+      - name: Package smoke test
+        run: tests/ConnectNet.Validation.Smoke/run.sh
+
       # Local development copies the native library from a cargo build
       # (native/target/release); CI has no Rust toolchain, so place the prebuilt
       # library tracked in the YAHA repo next to the conformance binary instead.

@@ -498,6 +498,9 @@ exhausted evaluation budget or a cancelled validation throws
 never a caller error. `ProtoValidator(ignoreUnsupportedRules: true)` is retained for
 compatibility; there are no unsupported rules left to skip.
 
+Upgrading from the handwritten evaluators? The observable changes are listed in
+[docs/validation-migration.md](docs/validation-migration.md).
+
 ## Architecture
 
 | Package | Target | Description |
@@ -514,6 +517,10 @@ Internal design and design decisions are documented in [docs/design.md](docs/des
 ## Conformance
 
 connect-net passes **100%** of the [connectrpc/conformance](https://github.com/connectrpc/conformance) suite (v1.0.5) in both client and server modes.
+
+`ConnectNet.Validation` passes every case of the pinned [protovalidate](https://github.com/bufbuild/protovalidate)
+conformance suite (2,872 cases, strict error and message comparison) and every required file of the
+pinned [cel-spec](https://github.com/google/cel-spec) corpus (1,958 cases); both run in CI.
 
 ## Installing
 

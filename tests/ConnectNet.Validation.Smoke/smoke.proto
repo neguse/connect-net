@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package smoke;
+
+option csharp_namespace = "Smoke";
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+message Reservation {
+  option (buf.validate.message).cel = {
+    id: "reservation.order"
+    message: "end must be after start"
+    expression: "this.end > this.start"
+  };
+
+  google.protobuf.Timestamp start = 1 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp end = 2 [(buf.validate.field).required = true];
+  string email = 3 [(buf.validate.field).string.email = true];
+  repeated string tags = 4 [(buf.validate.field).repeated = {
+    unique: true
+    items: {string: {max_len: 8}}
+  }];
+  map<string, int32> seats = 5 [(buf.validate.field).map.keys.string.min_len = 1];
+}
