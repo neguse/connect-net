@@ -129,7 +129,7 @@ public class StringRulesTests
 
         Assert.Contains(result.Violations, v =>
             v.FieldPath == "email" &&
-            v.ConstraintId == "string.email");
+            v.ConstraintId == "string.email_empty");
     }
 
     // --- prefix ---
@@ -154,7 +154,7 @@ public class StringRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "prefixVal" &&
+            v.FieldPath == "prefix_val" &&
             v.ConstraintId == "string.prefix" &&
             v.Message.Contains("pre_"));
     }
@@ -181,7 +181,7 @@ public class StringRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "patternVal" &&
+            v.FieldPath == "pattern_val" &&
             v.ConstraintId == "string.pattern");
     }
 
@@ -194,7 +194,7 @@ public class StringRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "patternVal" &&
+            v.FieldPath == "pattern_val" &&
             v.ConstraintId == "string.pattern");
     }
 
@@ -208,7 +208,7 @@ public class StringRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "patternVal" &&
+            v.FieldPath == "pattern_val" &&
             v.ConstraintId == "string.pattern");
     }
 
@@ -232,8 +232,8 @@ public class StringRulesTests
         Assert.Contains(result.Violations, v => v.FieldPath == "name" && v.ConstraintId == "string.min_len");
         Assert.Contains(result.Violations, v => v.FieldPath == "email" && v.ConstraintId == "string.email");
         Assert.Contains(result.Violations, v => v.FieldPath == "code" && v.ConstraintId == "string.min_len");
-        Assert.Contains(result.Violations, v => v.FieldPath == "prefixVal" && v.ConstraintId == "string.prefix");
-        Assert.Contains(result.Violations, v => v.FieldPath == "patternVal" && v.ConstraintId == "string.pattern");
+        Assert.Contains(result.Violations, v => v.FieldPath == "prefix_val" && v.ConstraintId == "string.prefix");
+        Assert.Contains(result.Violations, v => v.FieldPath == "pattern_val" && v.ConstraintId == "string.pattern");
     }
 
     [Fact]

@@ -71,7 +71,7 @@ public class ProtoValidatorTests
             SkipMe = "ab"      // would violate min_len=5 but should be skipped
         };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "skipMe");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "skip_me");
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public class ProtoValidatorTests
         };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v => v.FieldPath == "name");
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "skipMe");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "skip_me");
     }
 
     [Fact]

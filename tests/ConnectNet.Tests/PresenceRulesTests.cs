@@ -29,7 +29,7 @@ public class PresenceRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "optName" && v.ConstraintId == "string.min_len");
+            v.FieldPath == "opt_name" && v.ConstraintId == "string.min_len");
     }
 
     [Fact]
@@ -41,7 +41,7 @@ public class PresenceRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "optName" && v.ConstraintId == "string.min_len");
+            v.FieldPath == "opt_name" && v.ConstraintId == "string.min_len");
     }
 
     // --- oneof members: rules ignored when the member is not selected ---
@@ -53,7 +53,7 @@ public class PresenceRulesTests
 
         var result = _validator.Validate(msg);
 
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "choiceA");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "choice_a");
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public class PresenceRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "choiceA" && v.ConstraintId == "string.min_len");
+            v.FieldPath == "choice_a" && v.ConstraintId == "string.min_len");
     }
 
     [Fact]
@@ -75,7 +75,7 @@ public class PresenceRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "choiceB" && v.ConstraintId == "int32.gt");
+            v.FieldPath == "choice_b" && v.ConstraintId == "int32.gt");
     }
 
     // --- required: presence-tracking fields must be set ---
@@ -97,7 +97,7 @@ public class PresenceRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "optRequired" && v.ConstraintId == "required");
+            v.FieldPath == "opt_required" && v.ConstraintId == "required");
     }
 
     [Fact]
@@ -125,7 +125,7 @@ public class PresenceRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "implicitRequired" && v.ConstraintId == "required");
+            v.FieldPath == "implicit_required" && v.ConstraintId == "required");
     }
 
     [Fact]
@@ -138,7 +138,7 @@ public class PresenceRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "numRequired" && v.ConstraintId == "required");
+            v.FieldPath == "num_required" && v.ConstraintId == "required");
     }
 
     [Fact]
@@ -149,7 +149,7 @@ public class PresenceRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "listRequired" && v.ConstraintId == "required");
+            v.FieldPath == "list_required" && v.ConstraintId == "required");
     }
 
     [Fact]
@@ -160,6 +160,6 @@ public class PresenceRulesTests
 
         var result = _validator.Validate(msg);
 
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "listRequired");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "list_required");
     }
 }

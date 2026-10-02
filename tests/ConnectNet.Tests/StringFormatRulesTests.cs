@@ -28,7 +28,7 @@ public class StringFormatRulesTests
         // 3 emoji = 3 code points but 6 UTF-16 units
         var msg = new StringLenTestMessage { LenVal = "\U0001F600\U0001F600\U0001F600" };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "lenVal");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "len_val");
     }
 
     [Fact]
@@ -36,7 +36,7 @@ public class StringFormatRulesTests
     {
         var msg = new StringLenTestMessage { LenVal = "\U0001F600\U0001F600" };
         var result = _validator.Validate(msg);
-        Assert.Contains(result.Violations, v => v.FieldPath == "lenVal" && v.ConstraintId == "string.len");
+        Assert.Contains(result.Violations, v => v.FieldPath == "len_val" && v.ConstraintId == "string.len");
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public class StringFormatRulesTests
     {
         var msg = new StringLenTestMessage { MaxLenVal = "\U0001F600\U0001F600\U0001F600" }; // 3 code points <= 3
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "maxLenVal");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "max_len_val");
     }
 
     [Fact]
@@ -52,7 +52,7 @@ public class StringFormatRulesTests
     {
         var msg = new StringLenTestMessage { MaxLenVal = "abcd" };
         var result = _validator.Validate(msg);
-        Assert.Contains(result.Violations, v => v.FieldPath == "maxLenVal" && v.ConstraintId == "string.max_len");
+        Assert.Contains(result.Violations, v => v.FieldPath == "max_len_val" && v.ConstraintId == "string.max_len");
     }
 
     // --- len_bytes / min_bytes / max_bytes ---
@@ -62,7 +62,7 @@ public class StringFormatRulesTests
     {
         var msg = new StringLenTestMessage { LenBytesVal = "あ" }; // "あ" = 3 UTF-8 bytes
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "lenBytesVal");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "len_bytes_val");
     }
 
     [Fact]
@@ -70,7 +70,7 @@ public class StringFormatRulesTests
     {
         var msg = new StringLenTestMessage { LenBytesVal = "ab" }; // 2 bytes != 3
         var result = _validator.Validate(msg);
-        Assert.Contains(result.Violations, v => v.FieldPath == "lenBytesVal" && v.ConstraintId == "string.len_bytes");
+        Assert.Contains(result.Violations, v => v.FieldPath == "len_bytes_val" && v.ConstraintId == "string.len_bytes");
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public class StringFormatRulesTests
     {
         var msg = new StringLenTestMessage { MinBytesVal = "ab" };
         var result = _validator.Validate(msg);
-        Assert.Contains(result.Violations, v => v.FieldPath == "minBytesVal" && v.ConstraintId == "string.min_bytes");
+        Assert.Contains(result.Violations, v => v.FieldPath == "min_bytes_val" && v.ConstraintId == "string.min_bytes");
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public class StringFormatRulesTests
     {
         var msg = new StringLenTestMessage { MaxBytesVal = "あいう" }; // 9 bytes > 6
         var result = _validator.Validate(msg);
-        Assert.Contains(result.Violations, v => v.FieldPath == "maxBytesVal" && v.ConstraintId == "string.max_bytes");
+        Assert.Contains(result.Violations, v => v.FieldPath == "max_bytes_val" && v.ConstraintId == "string.max_bytes");
     }
 
     [Fact]
@@ -94,7 +94,7 @@ public class StringFormatRulesTests
     {
         var msg = new StringLenTestMessage { MaxBytesVal = "あい" }; // 6 bytes <= 6
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "maxBytesVal");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "max_bytes_val");
     }
 
     // --- email ---
@@ -103,6 +103,9 @@ public class StringFormatRulesTests
     [InlineData("user@example.com")]
     [InlineData("a@b")] // single-label domain is allowed by protovalidate
     [InlineData("first.last@sub.example.com")]
+    [InlineData("a..b@example.com")]     // the HTML definition protovalidate follows allows any dots in the local part
+    [InlineData(".a@example.com")]
+    [InlineData("a.@example.com")]
     public void Email_Valid(string value)
     {
         AssertFormatValid(new StringFormatTestMessage { Email = value }, "email");
@@ -111,9 +114,6 @@ public class StringFormatRulesTests
     [Theory]
     [InlineData("not-an-email")]
     [InlineData("a@b@c")]
-    [InlineData("a..b@example.com")]     // consecutive dots in local part
-    [InlineData(".a@example.com")]       // leading dot
-    [InlineData("a.@example.com")]       // trailing dot
     [InlineData("a@-example.com")]       // label starts with hyphen
     [InlineData("a@example-.com")]       // label ends with hyphen
     [InlineData("a@exa mple.com")]
@@ -123,17 +123,18 @@ public class StringFormatRulesTests
     }
 
     [Fact]
-    public void Email_LocalPartTooLong_Violation()
+    public void Email_LongLocalPart_IsValid()
     {
-        var local = new string('a', 65); // > 64
-        AssertFormatInvalid(new StringFormatTestMessage { Email = local + "@example.com" }, "email", "string.email");
+        // protovalidate applies the HTML standard's definition, which has no length limits.
+        var local = new string('a', 65);
+        AssertFormatValid(new StringFormatTestMessage { Email = local + "@example.com" }, "email");
     }
 
     [Fact]
-    public void Email_TotalTooLong_Violation()
+    public void Email_DomainLabelTooLong_Violation()
     {
-        var value = "a@" + string.Join(".", System.Linq.Enumerable.Repeat("abcdefgh", 32)); // way over 254
-        AssertFormatInvalid(new StringFormatTestMessage { Email = value }, "email", "string.email");
+        // ... but each domain label is at most 63 characters.
+        AssertFormatInvalid(new StringFormatTestMessage { Email = "a@" + new string('b', 64) + ".com" }, "email", "string.email");
     }
 
     // --- hostname ---
@@ -198,6 +199,8 @@ public class StringFormatRulesTests
     [InlineData("2001:db8::1")]
     [InlineData("2001:0db8:85a3:0000:0000:8a2e:0370:7334")]
     [InlineData("::ffff:192.0.2.1")]
+    [InlineData("::1%eth0")]     // zone ids are accepted, as in protovalidate
+    [InlineData("fe80::1%25")]
     public void Ipv6_Valid(string value)
     {
         AssertFormatValid(new StringFormatTestMessage { Ipv6 = value }, "ipv6");
@@ -205,8 +208,7 @@ public class StringFormatRulesTests
 
     [Theory]
     [InlineData("[::1]")]        // brackets
-    [InlineData("::1%eth0")]     // zone id
-    [InlineData("fe80::1%25")]
+    [InlineData("::1%")]         // empty zone id
     [InlineData("127.0.0.1")]
     [InlineData("12345::")]
     [InlineData("1:2:3:4:5:6:7:8:9")]
@@ -229,7 +231,7 @@ public class StringFormatRulesTests
     [InlineData("1")]
     [InlineData("127.1")]
     [InlineData("[::1]")]
-    [InlineData("::1%eth0")]
+    [InlineData("::1%")]
     public void Ip_Invalid(string value)
     {
         AssertFormatInvalid(new StringFormatTestMessage { Ip = value }, "ip", "string.ip");
@@ -277,7 +279,7 @@ public class StringFormatRulesTests
     [InlineData("/a b")]              // space
     public void UriRef_Invalid(string value)
     {
-        AssertFormatInvalid(new StringFormatTestMessage { UriRef = value }, "uriRef", "string.uri_ref");
+        AssertFormatInvalid(new StringFormatTestMessage { UriRef = value }, "uri_ref", "string.uri_ref");
     }
 
     // --- uuid / tuuid ---

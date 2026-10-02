@@ -93,7 +93,7 @@ public class ValidateInterceptorTests
     [Fact]
     public void ToFieldPath_ParsesRepeatedIndexSubscript()
     {
-        var fieldPath = ValidateInterceptor.ToFieldPath("items[3].name");
+        var fieldPath = Violation.ParseFieldPath("items[3].name");
 
         Assert.Equal(2, fieldPath.Elements.Count);
         Assert.Equal("items", fieldPath.Elements[0].FieldName);
@@ -105,7 +105,7 @@ public class ValidateInterceptorTests
     [Fact]
     public void ToFieldPath_ParsesStringKeySubscript()
     {
-        var fieldPath = ValidateInterceptor.ToFieldPath("entries[\"a.b\"]");
+        var fieldPath = Violation.ParseFieldPath("entries[\"a.b\"]");
 
         Assert.Single(fieldPath.Elements);
         Assert.Equal("entries", fieldPath.Elements[0].FieldName);

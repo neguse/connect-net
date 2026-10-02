@@ -72,7 +72,7 @@ public class WrapperAndBytesRulesTests
     {
         var msg = new BytesExtraTestMessage { PrefixVal = B(0x01, 0x02, 0x99) };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "prefixVal");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "prefix_val");
     }
 
     [Fact]
@@ -81,7 +81,7 @@ public class WrapperAndBytesRulesTests
         var msg = new BytesExtraTestMessage { PrefixVal = B(0x01, 0x03) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "prefixVal" && v.ConstraintId == "bytes.prefix");
+            v.FieldPath == "prefix_val" && v.ConstraintId == "bytes.prefix");
     }
 
     [Fact]
@@ -89,7 +89,7 @@ public class WrapperAndBytesRulesTests
     {
         var msg = new BytesExtraTestMessage { SuffixVal = B(0x01, 0xFF) };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "suffixVal");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "suffix_val");
     }
 
     [Fact]
@@ -98,7 +98,7 @@ public class WrapperAndBytesRulesTests
         var msg = new BytesExtraTestMessage { SuffixVal = B(0x01, 0x02) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "suffixVal" && v.ConstraintId == "bytes.suffix");
+            v.FieldPath == "suffix_val" && v.ConstraintId == "bytes.suffix");
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public class WrapperAndBytesRulesTests
     {
         var msg = new BytesExtraTestMessage { ContainsVal = ByteString.CopyFromUtf8("xxabcxx") };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "containsVal");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "contains_val");
     }
 
     [Fact]
@@ -115,7 +115,7 @@ public class WrapperAndBytesRulesTests
         var msg = new BytesExtraTestMessage { ContainsVal = ByteString.CopyFromUtf8("xxx") };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "containsVal" && v.ConstraintId == "bytes.contains");
+            v.FieldPath == "contains_val" && v.ConstraintId == "bytes.contains");
     }
 
     [Fact]
@@ -123,7 +123,7 @@ public class WrapperAndBytesRulesTests
     {
         var msg = new BytesExtraTestMessage { PatternVal = ByteString.CopyFromUtf8("abc") };
         var result = _validator.Validate(msg);
-        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "patternVal");
+        Assert.DoesNotContain(result.Violations, v => v.FieldPath == "pattern_val");
     }
 
     [Fact]
@@ -132,16 +132,17 @@ public class WrapperAndBytesRulesTests
         var msg = new BytesExtraTestMessage { PatternVal = ByteString.CopyFromUtf8("ABC") };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "patternVal" && v.ConstraintId == "bytes.pattern");
+            v.FieldPath == "pattern_val" && v.ConstraintId == "bytes.pattern");
     }
 
     [Fact]
-    public void BytesPattern_InvalidUtf8_Violation()
+    public void BytesPattern_InvalidUtf8_IsAnEvaluationError()
     {
+        // protovalidate reports a runtime error rather than a violation: the bytes cannot be
+        // converted to the string the regex is matched against.
         var msg = new BytesExtraTestMessage { PatternVal = B(0xFF, 0xFE) };
-        var result = _validator.Validate(msg);
-        Assert.Contains(result.Violations, v =>
-            v.FieldPath == "patternVal" && v.ConstraintId == "bytes.pattern");
+        var ex = Assert.Throws<ValidationEvaluationException>(() => _validator.Validate(msg));
+        Assert.Contains("bytes.pattern", ex.Message);
     }
 
     [Fact]
@@ -151,6 +152,6 @@ public class WrapperAndBytesRulesTests
         var msg = new BytesExtraTestMessage { PatternVal = B(0x61, 0x62, 0x63, 0x0A) };
         var result = _validator.Validate(msg);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "patternVal" && v.ConstraintId == "bytes.pattern");
+            v.FieldPath == "pattern_val" && v.ConstraintId == "bytes.pattern");
     }
 }

@@ -172,6 +172,41 @@ internal static class ProtoValues
         return SingularToCel(provider, field, raw);
     }
 
+    /// <summary>
+    /// The CEL value of a raw field value as the reflection accessor returns it: a list or
+    /// dictionary for a whole repeated or map field, otherwise one element (a repeated item, a
+    /// map key or value, or a singular field) whose descriptor is <paramref name="field"/>.
+    /// </summary>
+    public static CelValue ValueToCel(ProtoTypeProvider provider, FieldDescriptor field, object? raw, bool forItems)
+    {
+        if (!forItems && field.IsMap && raw is IDictionary dict)
+        {
+            var keyField = field.MessageType.FindFieldByNumber(1);
+            var valueField = field.MessageType.FindFieldByNumber(2);
+            var entries = new KeyValuePair<CelValue, CelValue>[dict.Count];
+            int i = 0;
+            foreach (DictionaryEntry entry in dict)
+            {
+                var key = ScalarToCel(provider, keyField, entry.Key);
+                var value = SingularToCel(provider, valueField, entry.Value);
+                if (value.IsError) return value;
+                entries[i++] = new KeyValuePair<CelValue, CelValue>(key, value);
+            }
+            return MapValue.Create(entries);
+        }
+        if (!forItems && field.IsRepeated && raw is IList list)
+        {
+            var values = new CelValue[list.Count];
+            for (int i = 0; i < values.Length; i++)
+            {
+                values[i] = SingularToCel(provider, field, list[i]);
+                if (values[i].IsError) return values[i];
+            }
+            return new ListValue(values);
+        }
+        return SingularToCel(provider, field, raw);
+    }
+
     private static CelValue SingularToCel(ProtoTypeProvider provider, FieldDescriptor field, object? raw)
     {
         switch (field.FieldType)

@@ -40,7 +40,8 @@ public class OneofRulesTests
         Assert.False(result.IsValid);
         Assert.Contains(result.Violations, v =>
             v.FieldPath == "contact" &&
-            v.ConstraintId == "oneof.required");
+            v.ConstraintId == "required" &&
+            v.Message == "exactly one field is required in oneof");
     }
 
     [Fact]

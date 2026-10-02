@@ -32,7 +32,7 @@ public class WellKnownTypeRulesTests
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "createdAt" &&
+            v.FieldPath == "created_at" &&
             v.ConstraintId == "required");
     }
 

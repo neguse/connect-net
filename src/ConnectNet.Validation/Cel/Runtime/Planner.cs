@@ -30,6 +30,10 @@ internal sealed class CelProgram
         var ctx = new EvalContext(activation, _slotCount, budget, cancellationToken);
         return _root.Eval(ctx);
     }
+
+    /// <summary>Evaluates the plan against a budget shared with other evaluations.</summary>
+    public CelValue Evaluate(Activation activation, EvalBudget budget) =>
+        _root.Eval(new EvalContext(activation, _slotCount, budget));
 }
 
 /// <summary>

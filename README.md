@@ -460,15 +460,43 @@ if (!result.IsValid)
 }
 ```
 
-### Unsupported rules
+Violations carry the structured `buf.validate` field and rule paths (`violation.Field`,
+`violation.Rule`, `violation.ToProto()`); `FieldPath` renders the field path the way
+protovalidate does, with proto field names: `items[0].name`, `entries["key"]`.
 
-Rules the validator does not implement (CEL expressions, `well_known_regex`, and a few
-string/bytes well-known formats) throw `NotSupportedException` when first encountered,
-rather than silently passing. To skip them instead, opt out explicitly:
+### Custom CEL rules
 
-```csharp
-var validator = new ProtoValidator(ignoreUnsupportedRules: true);
+Every rule of `validate.proto` is evaluated by the built-in CEL engine, including custom
+`cel` expressions on messages and fields and predefined rule extensions:
+
+```protobuf
+message Range {
+  option (buf.validate.message).cel = {
+    id: "range"
+    message: "min must not exceed max"
+    expression: "this.min <= this.max"
+  };
+  int32 min = 1;
+  int32 max = 2 [(buf.validate.field).cel = {
+    id: "max.positive"
+    expression: "this > 0 ? '' : 'max must be positive'"
+  }];
+}
 ```
+
+The environment is the one protovalidate defines: the CEL standard library, the strings
+extension, protovalidate's functions (`isEmail`, `isIp`, `unique`, ...), and `this`, `rules`,
+`rule` and `now`. Regular expressions follow RE2.
+
+### Schema and evaluation failures
+
+A schema whose rules cannot be compiled (a rule of the wrong type for its field, an
+expression that does not type-check, a rule naming a missing field) throws
+`ValidationCompilationException` from `Validate`; a rule that fails at runtime, an
+exhausted evaluation budget or a cancelled validation throws
+`ValidationEvaluationException`. Neither is reported as a violation: a broken schema is
+never a caller error. `ProtoValidator(ignoreUnsupportedRules: true)` is retained for
+compatibility; there are no unsupported rules left to skip.
 
 ## Architecture
 

@@ -230,3 +230,64 @@ message UnsupportedFieldMaskMessage {
 message UnsupportedNestedItemsMessage {
   repeated string ids = 1 [(buf.validate.field).repeated.items = {string: {ulid: true}}];
 }
+
+// --- Custom CEL rules ---
+message CelFieldTestMessage {
+  int32 a = 1 [(buf.validate.field).cel = {id: "a.positive", message: "a must be positive", expression: "this > 0"}];
+  string b = 2 [(buf.validate.field).cel = {id: "b.nonempty", expression: "this.size() > 0 ? '' : 'b must not be empty'"}];
+  repeated int32 items = 3 [(buf.validate.field).repeated.items = {
+    cel: {id: "item.even", message: "item must be even", expression: "this % 2 == 0"}
+  }];
+  map<string, int32> counts = 4 [(buf.validate.field).map = {
+    keys: {cel: {id: "key.lower", message: "key must be lowercase", expression: "this == this.lowerAscii()"}},
+    values: {cel: {id: "value.nonneg", message: "value must be non-negative", expression: "this >= 0"}}
+  }];
+  google.protobuf.Timestamp when = 5 [(buf.validate.field).cel = {id: "when.past", message: "must be in the past", expression: "this < now"}];
+  int32 shorthand = 6 [(buf.validate.field).cel_expression = "this != 13"];
+  string pattern = 7 [(buf.validate.field).cel = {id: "pattern.emoji", message: "must be three characters", expression: "this.matches('^.{3}$')"}];
+}
+
+message CelMessageTestMessage {
+  option (buf.validate.message).cel = {id: "range", message: "min must not exceed max", expression: "this.min <= this.max"};
+  option (buf.validate.message).cel_expression = "this.min >= 0";
+  int32 min = 1;
+  int32 max = 2;
+}
+
+message MessageOneofTestMessage {
+  option (buf.validate.message).oneof = {fields: ["a", "b"], required: true};
+  string a = 1 [(buf.validate.field).string.min_len = 2];
+  string b = 2;
+}
+
+message RecursiveTestMessage {
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+  RecursiveTestMessage child = 2;
+  repeated RecursiveTestMessage children = 3;
+}
+
+message MismatchedRuleTestMessage {
+  string val = 1 [(buf.validate.field).int32.gt = 1];
+}
+
+message BadExpressionTestMessage {
+  string val = 1 [(buf.validate.field).cel = {id: "bad", expression: "this.nope() +"}];
+}
+
+message NonBoolExpressionTestMessage {
+  string val = 1 [(buf.validate.field).cel = {id: "int", expression: "1 + 1"}];
+}
+
+message DynRuntimeErrorTestMessage {
+  option (buf.validate.message).cel = {id: "dyn", expression: "dyn(this.a) + 'str' == 'x'"};
+  int32 a = 1;
+}
+
+message ExpensiveTestMessage {
+  repeated int32 values = 1 [(buf.validate.field).cel = {id: "expensive", expression: "this.all(x, this.all(y, x + y >= 0))"}];
+}
+
+message NestedCelTestMessage {
+  CelFieldTestMessage inner = 1;
+  map<string, CelFieldTestMessage> by_name = 2;
+}

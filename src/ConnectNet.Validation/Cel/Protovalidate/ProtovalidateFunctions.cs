@@ -145,6 +145,10 @@ internal static class ProtovalidateFunctions
         var seen = new HashSet<UniqueKey>();
         foreach (var element in list.Elements)
         {
+            // The reference keys a Go map by the value, so NaN never matches anything (not
+            // even itself) and -0.0 and 0.0 are the same key.
+            if (element is DoubleValue { Value: double.NaN })
+                continue;
             if (!UniqueKey.TryCreate(element, out var key))
                 return new ErrorValue("unique: unsupported element type " + element.TypeName);
             if (!seen.Add(key))
@@ -174,7 +178,7 @@ internal static class ProtovalidateFunctions
                 case BoolValue b: key = new UniqueKey("bool", b.Value ? 1 : 0, null); return true;
                 case IntValue i: key = new UniqueKey("int", i.Value, null); return true;
                 case UintValue u: key = new UniqueKey("uint", unchecked((long)u.Value), null); return true;
-                case DoubleValue d: key = new UniqueKey("double", BitConverter.DoubleToInt64Bits(d.Value), null); return true;
+                case DoubleValue d: key = new UniqueKey("double", BitConverter.DoubleToInt64Bits(d.Value == 0 ? 0.0 : d.Value), null); return true;
                 case StringValue s: key = new UniqueKey("string", 0, s.Value); return true;
                 case BytesValue by: key = new UniqueKey("bytes", 0, Convert.ToBase64String(by.Value)); return true;
                 default: key = default; return false;

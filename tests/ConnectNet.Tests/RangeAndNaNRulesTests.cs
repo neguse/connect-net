@@ -116,7 +116,7 @@ public class RangeAndNaNRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "floatLt" && v.ConstraintId == "float.lt");
+            v.FieldPath == "float_lt" && v.ConstraintId == "float.lt");
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public class RangeAndNaNRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "doubleGte" && v.ConstraintId == "double.gte");
+            v.FieldPath == "double_gte" && v.ConstraintId == "double.gte");
     }
 
     [Fact]
@@ -140,7 +140,7 @@ public class RangeAndNaNRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "floatIn" && v.ConstraintId == "float.in");
+            v.FieldPath == "float_in" && v.ConstraintId == "float.in");
     }
 
     [Fact]
@@ -152,7 +152,7 @@ public class RangeAndNaNRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "floatConst" && v.ConstraintId == "float.const");
+            v.FieldPath == "float_const" && v.ConstraintId == "float.const");
     }
 
     // --- finite ---
@@ -166,7 +166,7 @@ public class RangeAndNaNRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "floatFinite" && v.ConstraintId == "float.finite");
+            v.FieldPath == "float_finite" && v.ConstraintId == "float.finite");
     }
 
     [Fact]
@@ -178,7 +178,7 @@ public class RangeAndNaNRulesTests
         var result = _validator.Validate(msg);
 
         Assert.Contains(result.Violations, v =>
-            v.FieldPath == "doubleFinite" && v.ConstraintId == "double.finite");
+            v.FieldPath == "double_finite" && v.ConstraintId == "double.finite");
     }
 
     [Fact]

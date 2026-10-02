@@ -8,6 +8,7 @@
     <PackageReference Include="Grpc.Tools" Version="2.*" PrivateAssets="All" />
     <Protobuf Include="greeter.proto" GrpcServices="None" />
     <Protobuf Include="validation_test.proto" GrpcServices="None" AdditionalImportDirs="../../src/ConnectNet.Validation/Proto" />
+    <Protobuf Include="validation_test_predefined.proto" GrpcServices="None" AdditionalImportDirs="../../src/ConnectNet.Validation/Proto" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/ConnectNet/ConnectNet.csproj" />

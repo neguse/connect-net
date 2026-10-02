@@ -47,21 +47,49 @@ internal sealed class EvalContext
 {
     public const long DefaultBudget = 1_000_000;
 
-    private long _remaining;
-
     public EvalContext(Activation activation, int slotCount, long budget = DefaultBudget,
         CancellationToken cancellationToken = default)
+        : this(activation, slotCount, new EvalBudget(budget, cancellationToken))
+    {
+    }
+
+    /// <summary>Evaluates against a budget shared with other evaluations, such as every rule of one validation.</summary>
+    public EvalContext(Activation activation, int slotCount, EvalBudget budget)
     {
         Activation = activation;
         Slots = slotCount == 0 ? Array.Empty<CelValue>() : new CelValue[slotCount];
-        _remaining = budget;
-        CancellationToken = cancellationToken;
+        Budget = budget;
     }
 
     public Activation Activation { get; }
 
     /// <summary>Values of comprehension variables, indexed by the slot the planner assigned.</summary>
     public CelValue[] Slots { get; }
+
+    public EvalBudget Budget { get; }
+
+    public CancellationToken CancellationToken => Budget.CancellationToken;
+
+    public long Remaining => Budget.Remaining;
+
+    /// <summary>Charges the budget; throws when exhausted or cancelled.</summary>
+    public void Consume(long cost) => Budget.Consume(cost);
+}
+
+/// <summary>
+/// The work one evaluation may do: operations, loop iterations and produced aggregate sizes
+/// are charged against it, and it carries the cancellation token. Sharing one budget across
+/// several programs bounds them together.
+/// </summary>
+internal sealed class EvalBudget
+{
+    private long _remaining;
+
+    public EvalBudget(long budget, CancellationToken cancellationToken = default)
+    {
+        _remaining = budget;
+        CancellationToken = cancellationToken;
+    }
 
     public CancellationToken CancellationToken { get; }
 
