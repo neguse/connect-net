@@ -71,6 +71,13 @@ public class ParserTests
     [InlineData("1 -1", "_-_(1, 1)")]
     [InlineData("1 - -1", "_-_(1, -1)")]
     [InlineData("a // comment\n + b", "_+_(a, b)")]
+    [InlineData("a.while", "a.while")]
+    [InlineData("a.as()", "a.as()")]
+    [InlineData("Msg{for: 1}", "Msg{for: 1}")]
+    [InlineData("pkg.if.Msg{}", "pkg.if.Msg{}")]
+    [InlineData("a.`b/c`", "a.b/c")]
+    [InlineData("has(a.`content-type`)", "has(a.content-type)")]
+    [InlineData("Msg{`in`: 1}", "Msg{in: 1}")]
     public void ParsesExpressions(string expr, string expected)
     {
         Assert.Equal(expected, Parse(expr));
@@ -178,8 +185,7 @@ public class ParserTests
     [InlineData("a.in", "expecting IDENTIFIER")]
     [InlineData("in", "mismatched input 'in'")]
     [InlineData("as", "reserved identifier: as")]
-    [InlineData("a.while", "reserved identifier: while")]
-    [InlineData("Msg{for: 1}", "reserved identifier: for")]
+    [InlineData("while(1)", "reserved identifier: while")]
     [InlineData("a = b", "token recognition error at: '='")]
     [InlineData("a & b", "token recognition error at: '&'")]
     [InlineData("a | b", "token recognition error at: '|'")]

@@ -130,6 +130,7 @@ public class CheckerTests
     [InlineData("double(1u)", "double")]
     [InlineData("bytes('a')", "bytes")]
     [InlineData("dyn(1)", "dyn")]
+    [InlineData("m.`k`", "int")]
     [InlineData("type(1)", "type(int)")]
     [InlineData("type(d)", "type(dyn)")]
     [InlineData("type(1) == int", "bool")]

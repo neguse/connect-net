@@ -138,7 +138,6 @@ internal abstract class TypeProvider
         ["type"] = CelType.TypeType,
         ["uint"] = CelType.Uint,
         ["google.protobuf.Any"] = CelType.Any,
-        ["dyn"] = CelType.Dyn,
     };
 
     /// <summary>

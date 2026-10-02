@@ -77,6 +77,10 @@ internal sealed class CheckerEnv
 
     private VariableDecl? LookupLocalIdent(string name)
     {
+        // A leading dot asks for the global; the local of the same name still has to be
+        // detected so that the resolved name keeps the dot and the evaluator skips the local.
+        if (name.StartsWith(".", StringComparison.Ordinal))
+            name = name.Substring(1);
         for (int i = _scopes.Count - 1; i >= 1; i--)
         {
             if (_scopes[i].TryGetValue(name, out var decl))

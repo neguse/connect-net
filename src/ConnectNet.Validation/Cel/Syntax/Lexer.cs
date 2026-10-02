@@ -10,6 +10,8 @@ internal enum TokenKind
     Eof,
     Error,
     Ident,
+    /// <summary>A backtick-quoted field name; permitted only as a selector or a message field name.</summary>
+    EscapedIdent,
     Reserved,
     Int,
     Uint,
@@ -154,6 +156,9 @@ internal sealed class Lexer
         if (c == '"' || c == '\'')
             return LexString(start, isRaw: false, isBytes: false);
 
+        if (c == '`')
+            return LexEscapedIdent(start);
+
         _pos++;
         switch (c)
         {
@@ -265,6 +270,27 @@ internal sealed class Lexer
         _pos += prefixLen;
         token = LexString(start, isRaw, isBytes);
         return true;
+    }
+
+    // ESC_IDENTIFIER: '`' (LETTER | DIGIT | '_' | '.' | '-' | '/' | ' ')+ '`'
+    private Token LexEscapedIdent(int start)
+    {
+        _pos++;
+        int textStart = _pos;
+        while (true)
+        {
+            int c = Peek();
+            if (c == '`')
+                break;
+            if (c < 0 || !(IsIdentPart(c) || c == '.' || c == '-' || c == '/' || c == ' '))
+                return Error(start, "token recognition error at: '`'");
+            _pos++;
+        }
+        if (_pos == textStart)
+            return Error(start, "token recognition error at: '`'");
+        var text = Source.Slice(textStart, _pos);
+        _pos++;
+        return new Token(TokenKind.EscapedIdent, start, _pos, text);
     }
 
     private Token LexNumber(int start)
