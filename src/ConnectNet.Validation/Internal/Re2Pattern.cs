@@ -46,6 +46,12 @@ internal static class Re2Pattern
     private const string NonWordBoundary =
         "(?:(?<![0-9A-Za-z_])(?![0-9A-Za-z_])|(?<=[0-9A-Za-z_])(?=[0-9A-Za-z_]))";
 
+    // RE2 matches code points; .NET matches UTF-16 code units. A single-character construct
+    // that can match a supplementary character (`.`, a negated class) is therefore emitted as
+    // an atomic alternation that consumes a surrogate pair whole, so `^.{3}$` counts emoji
+    // the way RE2 does and a quantifier can never split a pair.
+    private const string SurrogatePair = @"[\uD800-\uDBFF][\uDC00-\uDFFF]";
+
     private static readonly Dictionary<string, string> PosixClasses = new()
     {
         ["alnum"] = "0-9A-Za-z",
@@ -120,11 +126,12 @@ internal static class Re2Pattern
         private readonly StringBuilder _sb;
         private int _i;
 
-        // Whether RE2's `m` flag is on at the current position; it decides how `^` and `$`
-        // are rewritten. An inline flag group applies to the rest of its enclosing group, so
-        // the state is saved on '(' and restored on ')'.
+        // Whether RE2's `m` and `s` flags are on at the current position; they decide how
+        // `^`, `$` and `.` are rewritten. An inline flag group applies to the rest of its
+        // enclosing group, so the state is saved on '(' and restored on ')'.
         private bool _multiline;
-        private readonly Stack<bool> _groupFlags = new();
+        private bool _dotAll;
+        private readonly Stack<(bool Multiline, bool DotAll)> _groupFlags = new();
 
         public Translator(string pattern)
         {
@@ -150,8 +157,14 @@ internal static class Re2Pattern
                         break;
                     case ')':
                         if (_groupFlags.Count > 0)
-                            _multiline = _groupFlags.Pop();
+                            (_multiline, _dotAll) = _groupFlags.Pop();
                         _sb.Append(')');
+                        _i++;
+                        break;
+                    case '.':
+                        // RE2's `.` is any code point but `\n`, or any code point under `s`.
+                        _sb.Append("(?>").Append(SurrogatePair).Append('|')
+                            .Append(_dotAll ? @"[\s\S]" : @"[^\n]").Append(')');
                         _i++;
                         break;
                     case '^':
@@ -177,7 +190,7 @@ internal static class Re2Pattern
         {
             if (_i + 1 >= _p.Length || _p[_i + 1] != '?')
             {
-                _groupFlags.Push(_multiline);
+                _groupFlags.Push((_multiline, _dotAll));
                 _sb.Append('(');
                 _i++;
                 return;
@@ -188,7 +201,7 @@ internal static class Re2Pattern
             switch (_p[_i + 2])
             {
                 case ':':
-                    _groupFlags.Push(_multiline);
+                    _groupFlags.Push((_multiline, _dotAll));
                     _sb.Append("(?:");
                     _i += 3;
                     return;
@@ -221,7 +234,7 @@ internal static class Re2Pattern
             var gt = _p.IndexOf('>', lt + 1);
             if (gt < 0 || gt == lt + 1)
                 throw new ArgumentException("malformed group name");
-            _groupFlags.Push(_multiline);
+            _groupFlags.Push((_multiline, _dotAll));
             _sb.Append("(?<").Append(_p, lt + 1, gt - (lt + 1)).Append('>');
             _i = gt + 1;
         }
@@ -230,12 +243,17 @@ internal static class Re2Pattern
         {
             // (?flags) or (?flags:...) with flags drawn from RE2's i, m, s, U and '-' to
             // clear; anything else after "(?" is a construct RE2 does not have. .NET reads
-            // i, m, s and '-' the same way, so the group text is copied verbatim.
+            // i and m the same way, so those are passed through; `s` only changes how `.`
+            // is rewritten here (the translation never emits a bare `.`), so it is tracked
+            // and dropped from the emitted group.
             var j = _i + 2;
             var negating = false;
             var lastWasDash = false;
             var sawFlag = false;
             bool? m = null;
+            bool? dotAll = null;
+            var on = new StringBuilder();
+            var off = new StringBuilder();
             for (; j < _p.Length && _p[j] != ')' && _p[j] != ':'; j++)
             {
                 lastWasDash = false;
@@ -248,12 +266,17 @@ internal static class Re2Pattern
                         lastWasDash = true;
                         break;
                     case 'i':
+                        sawFlag = true;
+                        (negating ? off : on).Append('i');
+                        break;
                     case 's':
                         sawFlag = true;
+                        dotAll = !negating;
                         break;
                     case 'm':
                         sawFlag = true;
                         m = !negating;
+                        (negating ? off : on).Append('m');
                         break;
                     case 'U':
                         // RE2's U swaps quantifier greediness; .NET has no equivalent flag.
@@ -267,14 +290,28 @@ internal static class Re2Pattern
             if (!sawFlag || lastWasDash)
                 throw new ArgumentException("malformed flag group");
 
-            if (_p[j] == ':')
+            var scoped = _p[j] == ':';
+            if (scoped)
             {
                 // (?flags:...): the flags are scoped to the group.
-                _groupFlags.Push(_multiline);
+                _groupFlags.Push((_multiline, _dotAll));
             }
             if (m.HasValue)
                 _multiline = m.Value;
-            _sb.Append(_p, _i, j - _i + 1);
+            if (dotAll.HasValue)
+                _dotAll = dotAll.Value;
+
+            if (on.Length > 0 || off.Length > 0)
+            {
+                _sb.Append("(?").Append(on);
+                if (off.Length > 0)
+                    _sb.Append('-').Append(off);
+                _sb.Append(scoped ? ':' : ')');
+            }
+            else if (scoped)
+            {
+                _sb.Append("(?:");
+            }
             _i = j + 1;
         }
 
@@ -290,9 +327,9 @@ internal static class Re2Pattern
                 case 'd': _sb.Append('[').Append(Digit).Append(']'); _i += 2; return;
                 case 'w': _sb.Append('[').Append(Word).Append(']'); _i += 2; return;
                 case 's': _sb.Append('[').Append(Space).Append(']'); _i += 2; return;
-                case 'D': _sb.Append("[^").Append(Digit).Append(']'); _i += 2; return;
-                case 'W': _sb.Append("[^").Append(Word).Append(']'); _i += 2; return;
-                case 'S': _sb.Append("[^").Append(Space).Append(']'); _i += 2; return;
+                case 'D': AppendNegatedSet(Digit); return;
+                case 'W': AppendNegatedSet(Word); return;
+                case 'S': AppendNegatedSet(Space); return;
                 case 'b': _sb.Append(WordBoundary); _i += 2; return;
                 case 'B': _sb.Append(NonWordBoundary); _i += 2; return;
                 case 'A':
@@ -342,6 +379,14 @@ internal static class Re2Pattern
                     }
                     throw new ArgumentException($@"escape \{e} is not supported by RE2");
             }
+        }
+
+        private void AppendNegatedSet(string members)
+        {
+            // The complement of an ASCII set includes every supplementary character; see
+            // SurrogatePair.
+            _sb.Append("(?>").Append(SurrogatePair).Append("|[^").Append(members).Append("])");
+            _i += 2;
         }
 
         private void AppendUnicodeClass()
@@ -465,12 +510,18 @@ internal static class Re2Pattern
 
         private void AppendClass()
         {
-            _sb.Append('[');
             _i++;
-            if (_i < _p.Length && _p[_i] == '^')
+            var negated = _i < _p.Length && _p[_i] == '^';
+            if (negated)
             {
-                _sb.Append('^');
+                // A negated class matches any code point outside the set, supplementary
+                // characters included; see SurrogatePair.
+                _sb.Append("(?>").Append(SurrogatePair).Append("|[^");
                 _i++;
+            }
+            else
+            {
+                _sb.Append('[');
             }
 
             // Items are read the way RE2 reads them: whole-set items (POSIX classes, \d and
@@ -485,7 +536,7 @@ internal static class Re2Pattern
                     throw new ArgumentException("unterminated character class");
                 if (_p[_i] == ']' && !first)
                 {
-                    _sb.Append(']');
+                    _sb.Append(negated ? "])" : "]");
                     _i++;
                     return;
                 }

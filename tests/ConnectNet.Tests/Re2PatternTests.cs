@@ -298,6 +298,59 @@ public class Re2PatternTests
         Assert.Throws<ArgumentException>(() => Re2Pattern.GetRegex(pattern));
     }
 
+    // --- RE2 matches code points; .NET matches UTF-16 code units ---
+
+    [Fact]
+    public void Dot_MatchesOneSupplementaryCharacter()
+    {
+        // U+1F600 is one code point to RE2 and two code units to .NET.
+        Assert.True(Matches("^.$", "\U0001F600"));
+        Assert.False(Matches("^..$", "\U0001F600"));
+        Assert.True(Matches("^.{3}$", "a\U0001F600b"));
+        Assert.False(Matches("^.{2}$", "a\U0001F600b"));
+    }
+
+    [Fact]
+    public void Dot_ExcludesNewlineUnlessDotAll()
+    {
+        Assert.False(Matches("^a.b$", "a\nb"));
+        Assert.True(Matches("(?s)^a.b$", "a\nb"));
+        Assert.True(Matches("(?s:a.b)", "a\nb"));
+        Assert.False(Matches("(?s:a)a.b", "aa\nb"));
+        Assert.False(Matches("(?s)(?-s)a.b", "a\nb"));
+        Assert.True(Matches("(?is)^A.B$", "a\nb"));
+    }
+
+    [Fact]
+    public void NegatedClass_MatchesOneSupplementaryCharacter()
+    {
+        Assert.True(Matches("^[^a]$", "\U0001F600"));
+        Assert.False(Matches("^[^a]{2}$", "\U0001F600"));
+        Assert.True(Matches(@"^\W$", "\U0001F600"));
+        Assert.False(Matches(@"^\W\W$", "\U0001F600"));
+        Assert.True(Matches("^[^a]$", "\n")); // RE2's negated class includes newline
+    }
+
+    [Fact]
+    public void CaseInsensitiveFlag_IsPassedThrough()
+    {
+        Assert.True(Matches("(?i)^[a-z0-9]+$", "ABC123"));
+        Assert.False(Matches("^[a-z0-9]+$", "ABC123"));
+    }
+
+    [Theory]
+    [InlineData(@"^\w+$", "abc_1", true)]
+    [InlineData(@"^\*\\$", @"*\", true)]
+    [InlineData(@"^[\x00-\x7F]+$", "ascii only", true)]
+    [InlineData(@"^[\x00-\x7F]+$", "café", false)]
+    [InlineData("^[^\u0000-\u0008\u000A-\u001F\u007F]*$", "x y", true)]
+    [InlineData("^[^\u0000-\u0008\u000A-\u001F\u007F]*$", "x\ny", false)]
+    public void ProtovalidateStandardPatterns_Match(string pattern, string value, bool expected)
+    {
+        // Patterns used by buf.validate's own standard rules (header names/values, etc.).
+        Assert.Equal(expected, Matches(pattern, value));
+    }
+
     [Fact]
     public void InvalidPattern_FailsTheSameWayWhenAskedTwice()
     {
