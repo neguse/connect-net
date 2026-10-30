@@ -175,12 +175,7 @@ internal static class ConnectServerStreamHandler
                 response.Headers["Connect-Content-Encoding"] = responseCompressor.Name;
             }
 
-            var requestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var header in request.Headers)
-            {
-                requestHeaders[header.Key] = header.Value.ToString();
-            }
-            var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
+            var context = ConnectServerProtocol.CreateContext(request, ct);
             var handler = method.ServerStreamHandler;
             if (handler == null)
             {
@@ -199,7 +194,7 @@ internal static class ConnectServerStreamHandler
                     // Write response headers from context before the first envelope
                     if (!headersFlushed)
                     {
-                        foreach (var header in context.ResponseHeaders)
+                        foreach (var header in context.ResponseHeadersOrEmpty)
                         {
                             response.Headers[header.Key] = header.Value;
                         }
@@ -212,7 +207,7 @@ internal static class ConnectServerStreamHandler
                 // If no messages were yielded, still write headers
                 if (!headersFlushed)
                 {
-                    foreach (var header in context.ResponseHeaders)
+                    foreach (var header in context.ResponseHeadersOrEmpty)
                     {
                         response.Headers[header.Key] = header.Value;
                     }
@@ -245,7 +240,7 @@ internal static class ConnectServerStreamHandler
             // Write response headers on error path if not already sent
             if (!response.HasStarted)
             {
-                foreach (var header in context.ResponseHeaders)
+                foreach (var header in context.ResponseHeadersOrEmpty)
                 {
                     response.Headers[header.Key] = header.Value;
                 }
@@ -292,7 +287,7 @@ internal static class ConnectServerStreamHandler
         }
 
         writer.WriteStartObject("metadata");
-        foreach (var trailer in context.ResponseTrailers)
+        foreach (var trailer in context.ResponseTrailersOrEmpty)
         {
             writer.WriteStartArray(trailer.Key);
             writer.WriteStringValue(trailer.Value);

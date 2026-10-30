@@ -95,6 +95,20 @@ internal static class ConnectServerProtocol
     /// Selects a response compressor from an Accept-Encoding style header, honoring
     /// q-values: entries with q=0 are explicitly unacceptable and must not be chosen.
     /// </summary>
+    private static readonly Func<object, IDictionary<string, string>> CopyRequestHeaders = source =>
+    {
+        var headers = (IHeaderDictionary)source;
+        var copy = new Dictionary<string, string>(headers.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var header in headers)
+        {
+            copy[header.Key] = header.Value.ToString();
+        }
+        return copy;
+    };
+
+    internal static ConnectContext CreateContext(HttpRequest request, CancellationToken ct)
+        => new(request.Headers, CopyRequestHeaders, ct);
+
     internal static int CompressMinBytes(ConnectServerOptions? options)
         => options?.CompressMinBytes ?? ConnectServerOptions.DefaultCompressMinBytes;
 

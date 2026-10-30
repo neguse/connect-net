@@ -86,12 +86,7 @@ internal static class ConnectClientStreamHandler
                 response.Headers["Connect-Content-Encoding"] = responseCompressor.Name;
             }
 
-            var requestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var header in request.Headers)
-            {
-                requestHeaders[header.Key] = header.Value.ToString();
-            }
-            var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
+            var context = ConnectServerProtocol.CreateContext(request, ct);
             ConnectException? streamError = null;
 
             try
@@ -105,7 +100,7 @@ internal static class ConnectClientStreamHandler
                 // Write response headers from context before body
                 if (!response.HasStarted)
                 {
-                    foreach (var header in context.ResponseHeaders)
+                    foreach (var header in context.ResponseHeadersOrEmpty)
                     {
                         response.Headers[header.Key] = header.Value;
                     }
@@ -141,7 +136,7 @@ internal static class ConnectClientStreamHandler
             // Write response headers on error path too
             if (!response.HasStarted)
             {
-                foreach (var header in context.ResponseHeaders)
+                foreach (var header in context.ResponseHeadersOrEmpty)
                 {
                     response.Headers[header.Key] = header.Value;
                 }

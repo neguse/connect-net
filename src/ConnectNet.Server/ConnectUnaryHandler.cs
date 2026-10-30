@@ -55,12 +55,7 @@ internal static class ConnectUnaryHandler
         var timeoutCts = ConnectServerProtocol.StartTimeout(httpContext, serverOptions, ref ct);
 
         // Create context with request headers
-        var requestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var header in request.Headers)
-        {
-            requestHeaders[header.Key] = header.Value.ToString();
-        }
-        var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
+        var context = ConnectServerProtocol.CreateContext(request, ct);
 
         ArrayPoolBufferWriter? rawWriter = null;
         ArrayPoolBufferWriter? decompressedWriter = null;
@@ -127,13 +122,13 @@ internal static class ConnectUnaryHandler
             response.ContentType = $"application/{codec.Name}";
 
             // Write response headers
-            foreach (var header in context.ResponseHeaders)
+            foreach (var header in context.ResponseHeadersOrEmpty)
             {
                 response.Headers[header.Key] = header.Value;
             }
 
             // Write Trailer-* headers (Connect unary trailers)
-            foreach (var trailer in context.ResponseTrailers)
+            foreach (var trailer in context.ResponseTrailersOrEmpty)
             {
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
             }
@@ -292,12 +287,7 @@ internal static class ConnectUnaryHandler
         var timeoutCts = ConnectServerProtocol.StartTimeout(httpContext, serverOptions, ref ct);
 
         // Create context with request headers
-        var getRequestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var header in request.Headers)
-        {
-            getRequestHeaders[header.Key] = header.Value.ToString();
-        }
-        var getContext = new ConnectContext(requestHeaders: getRequestHeaders, cancellationToken: ct);
+        var getContext = ConnectServerProtocol.CreateContext(request, ct);
 
         try
         {
@@ -377,13 +367,13 @@ internal static class ConnectUnaryHandler
             response.ContentType = $"application/{codec.Name}";
 
             // Write response headers
-            foreach (var header in getContext.ResponseHeaders)
+            foreach (var header in getContext.ResponseHeadersOrEmpty)
             {
                 response.Headers[header.Key] = header.Value;
             }
 
             // Write Trailer-* headers (Connect unary trailers)
-            foreach (var trailer in getContext.ResponseTrailers)
+            foreach (var trailer in getContext.ResponseTrailersOrEmpty)
             {
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
             }
@@ -424,11 +414,11 @@ internal static class ConnectUnaryHandler
     {
         if (!response.HasStarted)
         {
-            foreach (var header in context.ResponseHeaders)
+            foreach (var header in context.ResponseHeadersOrEmpty)
             {
                 response.Headers[header.Key] = header.Value;
             }
-            foreach (var trailer in context.ResponseTrailers)
+            foreach (var trailer in context.ResponseTrailersOrEmpty)
             {
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
             }
