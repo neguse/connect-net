@@ -51,14 +51,108 @@ global::ConnectNet.ConnectJson.WriteMessage(writer, this.RawResponse, fallback);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+global::System.Span<bool> seenOneofs = stackalloc bool[1];
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseHeaders.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.ResponseHeaders.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Header>(ref reader, fallback));
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P2))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+if (this.ResponseCase == ResponseOneofCase.ResponseData) this.ClearResponse();
+continue;
+}
+this.ResponseData = global::ConnectNet.ConnectJson.ReadBytes(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F3))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+if (this.ResponseCase == ResponseOneofCase.Error) this.ClearResponse();
+continue;
+}
+this.Error = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Error>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F4) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P4))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseTrailers.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.ResponseTrailers.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Header>(ref reader, fallback));
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F6) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P6))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseDelayMs = 0;
+continue;
+}
+this.ResponseDelayMs = global::ConnectNet.ConnectJson.ReadUInt32(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F5) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P5))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.RawResponse = null;
+continue;
+}
+this.RawResponse = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.RawHTTPResponse>(ref reader, fallback);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("responseHeaders");
+internal static readonly global::System.Text.Json.JsonEncodedText P1 = global::System.Text.Json.JsonEncodedText.Encode("response_headers");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("responseData");
+internal static readonly global::System.Text.Json.JsonEncodedText P2 = global::System.Text.Json.JsonEncodedText.Encode("response_data");
 internal static readonly global::System.Text.Json.JsonEncodedText F3 = global::System.Text.Json.JsonEncodedText.Encode("error");
 internal static readonly global::System.Text.Json.JsonEncodedText F4 = global::System.Text.Json.JsonEncodedText.Encode("responseTrailers");
+internal static readonly global::System.Text.Json.JsonEncodedText P4 = global::System.Text.Json.JsonEncodedText.Encode("response_trailers");
 internal static readonly global::System.Text.Json.JsonEncodedText F6 = global::System.Text.Json.JsonEncodedText.Encode("responseDelayMs");
+internal static readonly global::System.Text.Json.JsonEncodedText P6 = global::System.Text.Json.JsonEncodedText.Encode("response_delay_ms");
 internal static readonly global::System.Text.Json.JsonEncodedText F5 = global::System.Text.Json.JsonEncodedText.Encode("rawResponse");
+internal static readonly global::System.Text.Json.JsonEncodedText P5 = global::System.Text.Json.JsonEncodedText.Encode("raw_response");
 }
 }
 public sealed partial class StreamResponseDefinition : global::ConnectNet.IConnectJsonMessage
@@ -114,14 +208,110 @@ global::ConnectNet.ConnectJson.WriteMessage(writer, this.RawResponse, fallback);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseHeaders.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.ResponseHeaders.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Header>(ref reader, fallback));
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P2))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseData.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.ResponseData.Add(global::ConnectNet.ConnectJson.ReadBytes(ref reader));
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F3) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P3))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseDelayMs = 0;
+continue;
+}
+this.ResponseDelayMs = global::ConnectNet.ConnectJson.ReadUInt32(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F4))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Error = null;
+continue;
+}
+this.Error = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Error>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F5) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P5))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseTrailers.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.ResponseTrailers.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Header>(ref reader, fallback));
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F6) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P6))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.RawResponse = null;
+continue;
+}
+this.RawResponse = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.RawHTTPResponse>(ref reader, fallback);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("responseHeaders");
+internal static readonly global::System.Text.Json.JsonEncodedText P1 = global::System.Text.Json.JsonEncodedText.Encode("response_headers");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("responseData");
+internal static readonly global::System.Text.Json.JsonEncodedText P2 = global::System.Text.Json.JsonEncodedText.Encode("response_data");
 internal static readonly global::System.Text.Json.JsonEncodedText F3 = global::System.Text.Json.JsonEncodedText.Encode("responseDelayMs");
+internal static readonly global::System.Text.Json.JsonEncodedText P3 = global::System.Text.Json.JsonEncodedText.Encode("response_delay_ms");
 internal static readonly global::System.Text.Json.JsonEncodedText F4 = global::System.Text.Json.JsonEncodedText.Encode("error");
 internal static readonly global::System.Text.Json.JsonEncodedText F5 = global::System.Text.Json.JsonEncodedText.Encode("responseTrailers");
+internal static readonly global::System.Text.Json.JsonEncodedText P5 = global::System.Text.Json.JsonEncodedText.Encode("response_trailers");
 internal static readonly global::System.Text.Json.JsonEncodedText F6 = global::System.Text.Json.JsonEncodedText.Encode("rawResponse");
+internal static readonly global::System.Text.Json.JsonEncodedText P6 = global::System.Text.Json.JsonEncodedText.Encode("raw_response");
 }
 }
 public sealed partial class UnaryRequest : global::ConnectNet.IConnectJsonMessage
@@ -142,10 +332,44 @@ global::ConnectNet.ConnectJson.WriteBytes(writer, this.RequestData);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseDefinition = null;
+continue;
+}
+this.ResponseDefinition = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.UnaryResponseDefinition>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P2))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.RequestData = global::Google.Protobuf.ByteString.Empty;
+continue;
+}
+this.RequestData = global::ConnectNet.ConnectJson.ReadBytes(ref reader);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("responseDefinition");
+internal static readonly global::System.Text.Json.JsonEncodedText P1 = global::System.Text.Json.JsonEncodedText.Encode("response_definition");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("requestData");
+internal static readonly global::System.Text.Json.JsonEncodedText P2 = global::System.Text.Json.JsonEncodedText.Encode("request_data");
 }
 }
 public sealed partial class UnaryResponse : global::ConnectNet.IConnectJsonMessage
@@ -159,6 +383,27 @@ writer.WritePropertyName(__ConnectJson.F1);
 global::ConnectNet.ConnectJson.WriteMessage(writer, this.Payload, fallback);
 }
 writer.WriteEndObject();
+}
+
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Payload = null;
+continue;
+}
+this.Payload = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.ConformancePayload>(ref reader, fallback);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
 }
 
 private static class __ConnectJson
@@ -184,10 +429,44 @@ global::ConnectNet.ConnectJson.WriteBytes(writer, this.RequestData);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseDefinition = null;
+continue;
+}
+this.ResponseDefinition = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.UnaryResponseDefinition>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P2))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.RequestData = global::Google.Protobuf.ByteString.Empty;
+continue;
+}
+this.RequestData = global::ConnectNet.ConnectJson.ReadBytes(ref reader);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("responseDefinition");
+internal static readonly global::System.Text.Json.JsonEncodedText P1 = global::System.Text.Json.JsonEncodedText.Encode("response_definition");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("requestData");
+internal static readonly global::System.Text.Json.JsonEncodedText P2 = global::System.Text.Json.JsonEncodedText.Encode("request_data");
 }
 }
 public sealed partial class IdempotentUnaryResponse : global::ConnectNet.IConnectJsonMessage
@@ -201,6 +480,27 @@ writer.WritePropertyName(__ConnectJson.F1);
 global::ConnectNet.ConnectJson.WriteMessage(writer, this.Payload, fallback);
 }
 writer.WriteEndObject();
+}
+
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Payload = null;
+continue;
+}
+this.Payload = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.ConformancePayload>(ref reader, fallback);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
 }
 
 private static class __ConnectJson
@@ -226,10 +526,44 @@ global::ConnectNet.ConnectJson.WriteBytes(writer, this.RequestData);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseDefinition = null;
+continue;
+}
+this.ResponseDefinition = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.StreamResponseDefinition>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P2))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.RequestData = global::Google.Protobuf.ByteString.Empty;
+continue;
+}
+this.RequestData = global::ConnectNet.ConnectJson.ReadBytes(ref reader);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("responseDefinition");
+internal static readonly global::System.Text.Json.JsonEncodedText P1 = global::System.Text.Json.JsonEncodedText.Encode("response_definition");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("requestData");
+internal static readonly global::System.Text.Json.JsonEncodedText P2 = global::System.Text.Json.JsonEncodedText.Encode("request_data");
 }
 }
 public sealed partial class ServerStreamResponse : global::ConnectNet.IConnectJsonMessage
@@ -243,6 +577,27 @@ writer.WritePropertyName(__ConnectJson.F1);
 global::ConnectNet.ConnectJson.WriteMessage(writer, this.Payload, fallback);
 }
 writer.WriteEndObject();
+}
+
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Payload = null;
+continue;
+}
+this.Payload = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.ConformancePayload>(ref reader, fallback);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
 }
 
 private static class __ConnectJson
@@ -268,10 +623,44 @@ global::ConnectNet.ConnectJson.WriteBytes(writer, this.RequestData);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseDefinition = null;
+continue;
+}
+this.ResponseDefinition = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.UnaryResponseDefinition>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P2))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.RequestData = global::Google.Protobuf.ByteString.Empty;
+continue;
+}
+this.RequestData = global::ConnectNet.ConnectJson.ReadBytes(ref reader);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("responseDefinition");
+internal static readonly global::System.Text.Json.JsonEncodedText P1 = global::System.Text.Json.JsonEncodedText.Encode("response_definition");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("requestData");
+internal static readonly global::System.Text.Json.JsonEncodedText P2 = global::System.Text.Json.JsonEncodedText.Encode("request_data");
 }
 }
 public sealed partial class ClientStreamResponse : global::ConnectNet.IConnectJsonMessage
@@ -285,6 +674,27 @@ writer.WritePropertyName(__ConnectJson.F1);
 global::ConnectNet.ConnectJson.WriteMessage(writer, this.Payload, fallback);
 }
 writer.WriteEndObject();
+}
+
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Payload = null;
+continue;
+}
+this.Payload = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.ConformancePayload>(ref reader, fallback);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
 }
 
 private static class __ConnectJson
@@ -315,11 +725,57 @@ global::ConnectNet.ConnectJson.WriteBytes(writer, this.RequestData);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ResponseDefinition = null;
+continue;
+}
+this.ResponseDefinition = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.StreamResponseDefinition>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P2))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.FullDuplex = false;
+continue;
+}
+this.FullDuplex = global::ConnectNet.ConnectJson.ReadBool(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F3) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P3))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.RequestData = global::Google.Protobuf.ByteString.Empty;
+continue;
+}
+this.RequestData = global::ConnectNet.ConnectJson.ReadBytes(ref reader);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("responseDefinition");
+internal static readonly global::System.Text.Json.JsonEncodedText P1 = global::System.Text.Json.JsonEncodedText.Encode("response_definition");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("fullDuplex");
+internal static readonly global::System.Text.Json.JsonEncodedText P2 = global::System.Text.Json.JsonEncodedText.Encode("full_duplex");
 internal static readonly global::System.Text.Json.JsonEncodedText F3 = global::System.Text.Json.JsonEncodedText.Encode("requestData");
+internal static readonly global::System.Text.Json.JsonEncodedText P3 = global::System.Text.Json.JsonEncodedText.Encode("request_data");
 }
 }
 public sealed partial class BidiStreamResponse : global::ConnectNet.IConnectJsonMessage
@@ -335,6 +791,27 @@ global::ConnectNet.ConnectJson.WriteMessage(writer, this.Payload, fallback);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Payload = null;
+continue;
+}
+this.Payload = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.ConformancePayload>(ref reader, fallback);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("payload");
@@ -348,6 +825,16 @@ writer.WriteStartObject();
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 }
@@ -358,6 +845,16 @@ void global::ConnectNet.IConnectJsonMessage.WriteJson(global::System.Text.Json.U
 {
 writer.WriteStartObject();
 writer.WriteEndObject();
+}
+
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+reader.Read();
+reader.Skip();
+}
 }
 
 private static class __ConnectJson
@@ -382,10 +879,43 @@ global::ConnectNet.ConnectJson.WriteMessage(writer, this.RequestInfo, fallback);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Data = global::Google.Protobuf.ByteString.Empty;
+continue;
+}
+this.Data = global::ConnectNet.ConnectJson.ReadBytes(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P2))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.RequestInfo = null;
+continue;
+}
+this.RequestInfo = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.ConformancePayload.Types.RequestInfo>(ref reader, fallback);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("data");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("requestInfo");
+internal static readonly global::System.Text.Json.JsonEncodedText P2 = global::System.Text.Json.JsonEncodedText.Encode("request_info");
 }
 public static partial class Types
 {
@@ -427,12 +957,81 @@ global::ConnectNet.ConnectJson.WriteMessage(writer, this.ConnectGetInfo, fallbac
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+global::System.Span<bool> seenOneofs = stackalloc bool[1];
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.RequestHeaders.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.RequestHeaders.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Header>(ref reader, fallback));
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P2))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ClearTimeoutMs();
+continue;
+}
+this.TimeoutMs = global::ConnectNet.ConnectJson.ReadInt64(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F3))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Requests.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.Requests.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Google.Protobuf.WellKnownTypes.Any>(ref reader, fallback));
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F4) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P4))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ConnectGetInfo = null;
+continue;
+}
+this.ConnectGetInfo = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.ConformancePayload.Types.ConnectGetInfo>(ref reader, fallback);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("requestHeaders");
+internal static readonly global::System.Text.Json.JsonEncodedText P1 = global::System.Text.Json.JsonEncodedText.Encode("request_headers");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("timeoutMs");
+internal static readonly global::System.Text.Json.JsonEncodedText P2 = global::System.Text.Json.JsonEncodedText.Encode("timeout_ms");
 internal static readonly global::System.Text.Json.JsonEncodedText F3 = global::System.Text.Json.JsonEncodedText.Encode("requests");
 internal static readonly global::System.Text.Json.JsonEncodedText F4 = global::System.Text.Json.JsonEncodedText.Encode("connectGetInfo");
+internal static readonly global::System.Text.Json.JsonEncodedText P4 = global::System.Text.Json.JsonEncodedText.Encode("connect_get_info");
 }
 }
 public sealed partial class ConnectGetInfo : global::ConnectNet.IConnectJsonMessage
@@ -453,9 +1052,36 @@ writer.WriteEndArray();
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.QueryParams.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.QueryParams.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Header>(ref reader, fallback));
+}
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("queryParams");
+internal static readonly global::System.Text.Json.JsonEncodedText P1 = global::System.Text.Json.JsonEncodedText.Encode("query_params");
 }
 }
 }
@@ -488,6 +1114,59 @@ writer.WriteEndArray();
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+global::System.Span<bool> seenOneofs = stackalloc bool[1];
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Code = default;
+continue;
+}
+if (__ConnectJson.ReadEnum0(ref reader, out var enumValue))
+{
+this.Code = enumValue;
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ClearMessage();
+continue;
+}
+this.Message = global::ConnectNet.ConnectJson.ReadString(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F3))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Details.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.Details.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Google.Protobuf.WellKnownTypes.Any>(ref reader, fallback));
+}
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("code");
@@ -517,6 +1196,50 @@ case 16: writer.WriteStringValue("CODE_UNAUTHENTICATED"); break;
 default: writer.WriteNumberValue((int)value); break;
 }
 }
+private static readonly global::System.Text.Json.JsonEncodedText E0_0 = global::System.Text.Json.JsonEncodedText.Encode("CODE_UNSPECIFIED");
+private static readonly global::System.Text.Json.JsonEncodedText E0_1 = global::System.Text.Json.JsonEncodedText.Encode("CODE_CANCELED");
+private static readonly global::System.Text.Json.JsonEncodedText E0_2 = global::System.Text.Json.JsonEncodedText.Encode("CODE_UNKNOWN");
+private static readonly global::System.Text.Json.JsonEncodedText E0_3 = global::System.Text.Json.JsonEncodedText.Encode("CODE_INVALID_ARGUMENT");
+private static readonly global::System.Text.Json.JsonEncodedText E0_4 = global::System.Text.Json.JsonEncodedText.Encode("CODE_DEADLINE_EXCEEDED");
+private static readonly global::System.Text.Json.JsonEncodedText E0_5 = global::System.Text.Json.JsonEncodedText.Encode("CODE_NOT_FOUND");
+private static readonly global::System.Text.Json.JsonEncodedText E0_6 = global::System.Text.Json.JsonEncodedText.Encode("CODE_ALREADY_EXISTS");
+private static readonly global::System.Text.Json.JsonEncodedText E0_7 = global::System.Text.Json.JsonEncodedText.Encode("CODE_PERMISSION_DENIED");
+private static readonly global::System.Text.Json.JsonEncodedText E0_8 = global::System.Text.Json.JsonEncodedText.Encode("CODE_RESOURCE_EXHAUSTED");
+private static readonly global::System.Text.Json.JsonEncodedText E0_9 = global::System.Text.Json.JsonEncodedText.Encode("CODE_FAILED_PRECONDITION");
+private static readonly global::System.Text.Json.JsonEncodedText E0_10 = global::System.Text.Json.JsonEncodedText.Encode("CODE_ABORTED");
+private static readonly global::System.Text.Json.JsonEncodedText E0_11 = global::System.Text.Json.JsonEncodedText.Encode("CODE_OUT_OF_RANGE");
+private static readonly global::System.Text.Json.JsonEncodedText E0_12 = global::System.Text.Json.JsonEncodedText.Encode("CODE_UNIMPLEMENTED");
+private static readonly global::System.Text.Json.JsonEncodedText E0_13 = global::System.Text.Json.JsonEncodedText.Encode("CODE_INTERNAL");
+private static readonly global::System.Text.Json.JsonEncodedText E0_14 = global::System.Text.Json.JsonEncodedText.Encode("CODE_UNAVAILABLE");
+private static readonly global::System.Text.Json.JsonEncodedText E0_15 = global::System.Text.Json.JsonEncodedText.Encode("CODE_DATA_LOSS");
+private static readonly global::System.Text.Json.JsonEncodedText E0_16 = global::System.Text.Json.JsonEncodedText.Encode("CODE_UNAUTHENTICATED");
+internal static bool ReadEnum0(ref global::System.Text.Json.Utf8JsonReader reader, out global::Connectrpc.Conformance.V1.Code value)
+{
+if (reader.TokenType != global::System.Text.Json.JsonTokenType.String)
+{
+value = (global::Connectrpc.Conformance.V1.Code)global::ConnectNet.ConnectJson.ReadInt32(ref reader);
+return true;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_0)) { value = (global::Connectrpc.Conformance.V1.Code)0; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_1)) { value = (global::Connectrpc.Conformance.V1.Code)1; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_2)) { value = (global::Connectrpc.Conformance.V1.Code)2; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_3)) { value = (global::Connectrpc.Conformance.V1.Code)3; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_4)) { value = (global::Connectrpc.Conformance.V1.Code)4; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_5)) { value = (global::Connectrpc.Conformance.V1.Code)5; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_6)) { value = (global::Connectrpc.Conformance.V1.Code)6; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_7)) { value = (global::Connectrpc.Conformance.V1.Code)7; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_8)) { value = (global::Connectrpc.Conformance.V1.Code)8; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_9)) { value = (global::Connectrpc.Conformance.V1.Code)9; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_10)) { value = (global::Connectrpc.Conformance.V1.Code)10; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_11)) { value = (global::Connectrpc.Conformance.V1.Code)11; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_12)) { value = (global::Connectrpc.Conformance.V1.Code)12; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_13)) { value = (global::Connectrpc.Conformance.V1.Code)13; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_14)) { value = (global::Connectrpc.Conformance.V1.Code)14; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_15)) { value = (global::Connectrpc.Conformance.V1.Code)15; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_16)) { value = (global::Connectrpc.Conformance.V1.Code)16; return true; }
+value = default;
+return false;
+}
 }
 }
 public sealed partial class Header : global::ConnectNet.IConnectJsonMessage
@@ -540,6 +1263,43 @@ global::ConnectNet.ConnectJson.WriteString(writer, item);
 writer.WriteEndArray();
 }
 writer.WriteEndObject();
+}
+
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Name = "";
+continue;
+}
+this.Name = global::ConnectNet.ConnectJson.ReadString(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Value.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.Value.Add(global::ConnectNet.ConnectJson.ReadString(ref reader));
+}
+continue;
+}
+reader.Read();
+reader.Skip();
+}
 }
 
 private static class __ConnectJson
@@ -606,13 +1366,120 @@ global::ConnectNet.ConnectJson.WriteMessage(writer, this.Stream, fallback);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+global::System.Span<bool> seenOneofs = stackalloc bool[1];
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Verb = "";
+continue;
+}
+this.Verb = global::ConnectNet.ConnectJson.ReadString(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Uri = "";
+continue;
+}
+this.Uri = global::ConnectNet.ConnectJson.ReadString(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F3))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Headers.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.Headers.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Header>(ref reader, fallback));
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F4) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P4))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.RawQueryParams.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.RawQueryParams.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Header>(ref reader, fallback));
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F5) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P5))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.EncodedQueryParams.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.EncodedQueryParams.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.RawHTTPRequest.Types.EncodedQueryParam>(ref reader, fallback));
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F6))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+if (this.BodyCase == BodyOneofCase.Unary) this.ClearBody();
+continue;
+}
+this.Unary = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.MessageContents>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F7))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+if (this.BodyCase == BodyOneofCase.Stream) this.ClearBody();
+continue;
+}
+this.Stream = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.StreamContents>(ref reader, fallback);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("verb");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("uri");
 internal static readonly global::System.Text.Json.JsonEncodedText F3 = global::System.Text.Json.JsonEncodedText.Encode("headers");
 internal static readonly global::System.Text.Json.JsonEncodedText F4 = global::System.Text.Json.JsonEncodedText.Encode("rawQueryParams");
+internal static readonly global::System.Text.Json.JsonEncodedText P4 = global::System.Text.Json.JsonEncodedText.Encode("raw_query_params");
 internal static readonly global::System.Text.Json.JsonEncodedText F5 = global::System.Text.Json.JsonEncodedText.Encode("encodedQueryParams");
+internal static readonly global::System.Text.Json.JsonEncodedText P5 = global::System.Text.Json.JsonEncodedText.Encode("encoded_query_params");
 internal static readonly global::System.Text.Json.JsonEncodedText F6 = global::System.Text.Json.JsonEncodedText.Encode("unary");
 internal static readonly global::System.Text.Json.JsonEncodedText F7 = global::System.Text.Json.JsonEncodedText.Encode("stream");
 }
@@ -641,11 +1508,55 @@ writer.WriteBooleanValue(this.Base64Encode);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Name = "";
+continue;
+}
+this.Name = global::ConnectNet.ConnectJson.ReadString(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Value = null;
+continue;
+}
+this.Value = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.MessageContents>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F3) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P3))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Base64Encode = false;
+continue;
+}
+this.Base64Encode = global::ConnectNet.ConnectJson.ReadBool(ref reader);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("name");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("value");
 internal static readonly global::System.Text.Json.JsonEncodedText F3 = global::System.Text.Json.JsonEncodedText.Encode("base64Encode");
+internal static readonly global::System.Text.Json.JsonEncodedText P3 = global::System.Text.Json.JsonEncodedText.Encode("base64_encode");
 }
 }
 }
@@ -678,11 +1589,73 @@ __ConnectJson.WriteEnum0(writer, this.Compression);
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+global::System.Span<bool> seenOneofs = stackalloc bool[1];
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+if (this.DataCase == DataOneofCase.Binary) this.ClearData();
+continue;
+}
+this.Binary = global::ConnectNet.ConnectJson.ReadBytes(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+if (this.DataCase == DataOneofCase.Text) this.ClearData();
+continue;
+}
+this.Text = global::ConnectNet.ConnectJson.ReadString(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F3) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P3))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+if (this.DataCase == DataOneofCase.BinaryMessage) this.ClearData();
+continue;
+}
+this.BinaryMessage = global::ConnectNet.ConnectJson.ReadMessage<global::Google.Protobuf.WellKnownTypes.Any>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F4))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Compression = default;
+continue;
+}
+if (__ConnectJson.ReadEnum0(ref reader, out var enumValue))
+{
+this.Compression = enumValue;
+}
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("binary");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("text");
 internal static readonly global::System.Text.Json.JsonEncodedText F3 = global::System.Text.Json.JsonEncodedText.Encode("binaryMessage");
+internal static readonly global::System.Text.Json.JsonEncodedText P3 = global::System.Text.Json.JsonEncodedText.Encode("binary_message");
 internal static readonly global::System.Text.Json.JsonEncodedText F4 = global::System.Text.Json.JsonEncodedText.Encode("compression");
 internal static void WriteEnum0(global::System.Text.Json.Utf8JsonWriter writer, global::Connectrpc.Conformance.V1.Compression value)
 {
@@ -697,6 +1670,30 @@ case 5: writer.WriteStringValue("COMPRESSION_DEFLATE"); break;
 case 6: writer.WriteStringValue("COMPRESSION_SNAPPY"); break;
 default: writer.WriteNumberValue((int)value); break;
 }
+}
+private static readonly global::System.Text.Json.JsonEncodedText E0_0 = global::System.Text.Json.JsonEncodedText.Encode("COMPRESSION_UNSPECIFIED");
+private static readonly global::System.Text.Json.JsonEncodedText E0_1 = global::System.Text.Json.JsonEncodedText.Encode("COMPRESSION_IDENTITY");
+private static readonly global::System.Text.Json.JsonEncodedText E0_2 = global::System.Text.Json.JsonEncodedText.Encode("COMPRESSION_GZIP");
+private static readonly global::System.Text.Json.JsonEncodedText E0_3 = global::System.Text.Json.JsonEncodedText.Encode("COMPRESSION_BR");
+private static readonly global::System.Text.Json.JsonEncodedText E0_4 = global::System.Text.Json.JsonEncodedText.Encode("COMPRESSION_ZSTD");
+private static readonly global::System.Text.Json.JsonEncodedText E0_5 = global::System.Text.Json.JsonEncodedText.Encode("COMPRESSION_DEFLATE");
+private static readonly global::System.Text.Json.JsonEncodedText E0_6 = global::System.Text.Json.JsonEncodedText.Encode("COMPRESSION_SNAPPY");
+internal static bool ReadEnum0(ref global::System.Text.Json.Utf8JsonReader reader, out global::Connectrpc.Conformance.V1.Compression value)
+{
+if (reader.TokenType != global::System.Text.Json.JsonTokenType.String)
+{
+value = (global::Connectrpc.Conformance.V1.Compression)global::ConnectNet.ConnectJson.ReadInt32(ref reader);
+return true;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_0)) { value = (global::Connectrpc.Conformance.V1.Compression)0; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_1)) { value = (global::Connectrpc.Conformance.V1.Compression)1; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_2)) { value = (global::Connectrpc.Conformance.V1.Compression)2; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_3)) { value = (global::Connectrpc.Conformance.V1.Compression)3; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_4)) { value = (global::Connectrpc.Conformance.V1.Compression)4; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_5)) { value = (global::Connectrpc.Conformance.V1.Compression)5; return true; }
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E0_6)) { value = (global::Connectrpc.Conformance.V1.Compression)6; return true; }
+value = default;
+return false;
 }
 }
 }
@@ -716,6 +1713,32 @@ global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
 writer.WriteEndArray();
 }
 writer.WriteEndObject();
+}
+
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Items.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.Items.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.StreamContents.Types.StreamItem>(ref reader, fallback));
+}
+continue;
+}
+reader.Read();
+reader.Skip();
+}
 }
 
 private static class __ConnectJson
@@ -745,6 +1768,51 @@ writer.WritePropertyName(__ConnectJson.F3);
 global::ConnectNet.ConnectJson.WriteMessage(writer, this.Payload, fallback);
 }
 writer.WriteEndObject();
+}
+
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+global::System.Span<bool> seenOneofs = stackalloc bool[1];
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Flags = 0;
+continue;
+}
+this.Flags = global::ConnectNet.ConnectJson.ReadUInt32(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.ClearLength();
+continue;
+}
+this.Length = global::ConnectNet.ConnectJson.ReadUInt32(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F3))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Payload = null;
+continue;
+}
+this.Payload = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.MessageContents>(ref reader, fallback);
+continue;
+}
+reader.Read();
+reader.Skip();
+}
 }
 
 private static class __ConnectJson
@@ -799,9 +1867,88 @@ writer.WriteEndArray();
 writer.WriteEndObject();
 }
 
+void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)
+{
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartObject);
+global::System.Span<bool> seenOneofs = stackalloc bool[1];
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndObject)
+{
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F1) || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P1))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.StatusCode = 0;
+continue;
+}
+this.StatusCode = global::ConnectNet.ConnectJson.ReadUInt32(ref reader);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F2))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Headers.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.Headers.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Header>(ref reader, fallback));
+}
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F3))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+if (this.BodyCase == BodyOneofCase.Unary) this.ClearBody();
+continue;
+}
+this.Unary = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.MessageContents>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F4))
+{
+global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, 0);
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+if (this.BodyCase == BodyOneofCase.Stream) this.ClearBody();
+continue;
+}
+this.Stream = global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.StreamContents>(ref reader, fallback);
+continue;
+}
+if (global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F5))
+{
+reader.Read();
+if (reader.TokenType == global::System.Text.Json.JsonTokenType.Null)
+{
+this.Trailers.Clear();
+continue;
+}
+global::ConnectNet.ConnectJson.ExpectToken(ref reader, global::System.Text.Json.JsonTokenType.StartArray);
+while (reader.Read() && reader.TokenType != global::System.Text.Json.JsonTokenType.EndArray)
+{
+global::ConnectNet.ConnectJson.RejectNull(ref reader);
+this.Trailers.Add(global::ConnectNet.ConnectJson.ReadMessage<global::Connectrpc.Conformance.V1.Header>(ref reader, fallback));
+}
+continue;
+}
+reader.Read();
+reader.Skip();
+}
+}
+
 private static class __ConnectJson
 {
 internal static readonly global::System.Text.Json.JsonEncodedText F1 = global::System.Text.Json.JsonEncodedText.Encode("statusCode");
+internal static readonly global::System.Text.Json.JsonEncodedText P1 = global::System.Text.Json.JsonEncodedText.Encode("status_code");
 internal static readonly global::System.Text.Json.JsonEncodedText F2 = global::System.Text.Json.JsonEncodedText.Encode("headers");
 internal static readonly global::System.Text.Json.JsonEncodedText F3 = global::System.Text.Json.JsonEncodedText.Encode("unary");
 internal static readonly global::System.Text.Json.JsonEncodedText F4 = global::System.Text.Json.JsonEncodedText.Encode("stream");

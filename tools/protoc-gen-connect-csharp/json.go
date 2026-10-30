@@ -152,14 +152,197 @@ func generateJSONMembers(p func(string, ...interface{}), message *protogen.Messa
 	p("writer.WriteEndObject();")
 	p("}")
 	p("")
+	generateJSONReader(p, message, enumIndex)
+	p("")
 	p("private static class __ConnectJson")
 	p("{")
 	for _, field := range message.Fields {
 		p("internal static readonly global::System.Text.Json.JsonEncodedText F%d = global::System.Text.Json.JsonEncodedText.Encode(%q);", field.Desc.Number(), field.Desc.JSONName())
+		if string(field.Desc.Name()) != field.Desc.JSONName() {
+			p("internal static readonly global::System.Text.Json.JsonEncodedText P%d = global::System.Text.Json.JsonEncodedText.Encode(%q);", field.Desc.Number(), string(field.Desc.Name()))
+		}
 	}
 	for i, e := range enumOrder {
 		generateJSONEnumWriter(p, i, e)
+		generateJSONEnumReader(p, i, e)
 	}
+	p("}")
+}
+
+func generateJSONReader(p func(string, ...interface{}), message *protogen.Message, enumIndex func(protoreflect.EnumDescriptor) int) {
+	const tokens = "global::System.Text.Json.JsonTokenType"
+
+	// JSON may repeat a field, where the last value wins, but may set a oneof only once. That
+	// includes the synthetic oneof behind a proto3 optional field.
+	oneofSlots := map[*protogen.Oneof]int{}
+	for _, field := range message.Fields {
+		if field.Oneof != nil {
+			if _, ok := oneofSlots[field.Oneof]; !ok {
+				oneofSlots[field.Oneof] = len(oneofSlots)
+			}
+		}
+	}
+
+	p("void global::ConnectNet.IConnectJsonMessage.MergeJson(ref global::System.Text.Json.Utf8JsonReader reader, global::Google.Protobuf.JsonParser fallback)")
+	p("{")
+	p("global::ConnectNet.ConnectJson.ExpectToken(ref reader, %s.StartObject);", tokens)
+	if len(oneofSlots) > 0 {
+		p("global::System.Span<bool> seenOneofs = stackalloc bool[%d];", len(oneofSlots))
+	}
+	p("while (reader.Read() && reader.TokenType != %s.EndObject)", tokens)
+	p("{")
+	for _, field := range message.Fields {
+		desc := field.Desc
+		match := fmt.Sprintf("global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.F%d)", desc.Number())
+		if string(desc.Name()) != desc.JSONName() {
+			match += fmt.Sprintf(" || global::ConnectNet.ConnectJson.TextEquals(ref reader, __ConnectJson.P%d)", desc.Number())
+		}
+		p("if (%s)", match)
+		p("{")
+		if field.Oneof != nil {
+			p("global::ConnectNet.ConnectJson.MarkOneofSeen(seenOneofs, %d);", oneofSlots[field.Oneof])
+		}
+		p("reader.Read();")
+		if !isValueMessage(desc) || desc.IsList() || desc.IsMap() {
+			p("if (reader.TokenType == %s.Null)", tokens)
+			p("{")
+			p("%s", jsonClear(field))
+			p("continue;")
+			p("}")
+		}
+		prop := "this." + propertyName(desc)
+		switch {
+		case desc.IsMap():
+			p("global::ConnectNet.ConnectJson.ExpectToken(ref reader, %s.StartObject);", tokens)
+			p("while (reader.Read() && reader.TokenType != %s.EndObject)", tokens)
+			p("{")
+			p("var key = global::ConnectNet.ConnectJson.%s(ref reader);", jsonMapKeyReader(desc.MapKey().Kind()))
+			p("reader.Read();")
+			if !isValueMessage(desc.MapValue()) {
+				p("global::ConnectNet.ConnectJson.RejectNull(ref reader);")
+			}
+			generateJSONAssign(p, desc.MapValue(), enumIndex, func(value string) string { return fmt.Sprintf("%s[key] = %s;", prop, value) })
+			p("}")
+		case desc.IsList():
+			p("global::ConnectNet.ConnectJson.ExpectToken(ref reader, %s.StartArray);", tokens)
+			p("while (reader.Read() && reader.TokenType != %s.EndArray)", tokens)
+			p("{")
+			if !isValueMessage(desc) {
+				p("global::ConnectNet.ConnectJson.RejectNull(ref reader);")
+			}
+			generateJSONAssign(p, desc, enumIndex, func(value string) string { return fmt.Sprintf("%s.Add(%s);", prop, value) })
+			p("}")
+		default:
+			generateJSONAssign(p, desc, enumIndex, func(value string) string { return fmt.Sprintf("%s = %s;", prop, value) })
+		}
+		p("continue;")
+		p("}")
+	}
+	p("reader.Read();")
+	p("reader.Skip();")
+	p("}")
+	p("}")
+}
+
+func isValueMessage(desc protoreflect.FieldDescriptor) bool {
+	return desc.Message() != nil && desc.Message().FullName() == "google.protobuf.Value"
+}
+
+func jsonClear(field *protogen.Field) string {
+	desc := field.Desc
+	prop := "this." + propertyName(desc)
+	switch {
+	case desc.IsMap() || desc.IsList():
+		return prop + ".Clear();"
+	case desc.HasOptionalKeyword():
+		return "this.Clear" + propertyName(desc) + "();"
+	case field.Oneof != nil && !field.Oneof.Desc.IsSynthetic():
+		oneof := underscoresToPascalCase(string(field.Oneof.Desc.Name()))
+		return fmt.Sprintf("if (this.%sCase == %sOneofCase.%s) this.Clear%s();", oneof, oneof, oneofCaseName(desc), oneof)
+	case desc.Message() != nil:
+		return prop + " = null;"
+	}
+	switch desc.Kind() {
+	case protoreflect.StringKind:
+		return prop + " = \"\";"
+	case protoreflect.BytesKind:
+		return prop + " = global::Google.Protobuf.ByteString.Empty;"
+	case protoreflect.BoolKind:
+		return prop + " = false;"
+	case protoreflect.EnumKind:
+		return prop + " = default;"
+	}
+	return prop + " = 0;"
+}
+
+func generateJSONAssign(p func(string, ...interface{}), desc protoreflect.FieldDescriptor, enumIndex func(protoreflect.EnumDescriptor) int, assign func(string) string) {
+	if desc.Kind() == protoreflect.EnumKind {
+		// An unknown enum name is ignored, like any other unknown field.
+		p("if (__ConnectJson.ReadEnum%d(ref reader, out var enumValue))", enumIndex(desc.Enum()))
+		p("{")
+		p("%s", assign("enumValue"))
+		p("}")
+		return
+	}
+	if desc.Message() != nil {
+		if kind, wrapper := wrapperKinds[desc.Message().FullName()]; wrapper {
+			p("%s", assign(jsonReadScalar(kind)))
+			return
+		}
+		p("%s", assign(fmt.Sprintf("global::ConnectNet.ConnectJson.ReadMessage<%s>(ref reader, fallback)", csharpTypeName(desc.Message()))))
+		return
+	}
+	p("%s", assign(jsonReadScalar(desc.Kind())))
+}
+
+func jsonReadScalar(kind protoreflect.Kind) string {
+	name := map[protoreflect.Kind]string{
+		protoreflect.BoolKind: "ReadBool", protoreflect.StringKind: "ReadString", protoreflect.BytesKind: "ReadBytes",
+		protoreflect.FloatKind: "ReadFloat", protoreflect.DoubleKind: "ReadDouble",
+		protoreflect.Int32Kind: "ReadInt32", protoreflect.Sint32Kind: "ReadInt32", protoreflect.Sfixed32Kind: "ReadInt32",
+		protoreflect.Uint32Kind: "ReadUInt32", protoreflect.Fixed32Kind: "ReadUInt32",
+		protoreflect.Int64Kind: "ReadInt64", protoreflect.Sint64Kind: "ReadInt64", protoreflect.Sfixed64Kind: "ReadInt64",
+		protoreflect.Uint64Kind: "ReadUInt64", protoreflect.Fixed64Kind: "ReadUInt64",
+	}[kind]
+	return "global::ConnectNet.ConnectJson." + name + "(ref reader)"
+}
+
+func jsonMapKeyReader(kind protoreflect.Kind) string {
+	switch kind {
+	case protoreflect.StringKind:
+		return "ReadString"
+	case protoreflect.BoolKind:
+		return "ReadBoolKey"
+	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
+		return "ReadInt32"
+	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
+		return "ReadUInt32"
+	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		return "ReadInt64"
+	}
+	return "ReadUInt64"
+}
+
+func generateJSONEnumReader(p func(string, ...interface{}), index int, e protoreflect.EnumDescriptor) {
+	const tokens = "global::System.Text.Json.JsonTokenType"
+	typeName := csharpTypeName(e)
+	values := e.Values()
+	for i := 0; i < values.Len(); i++ {
+		p("private static readonly global::System.Text.Json.JsonEncodedText E%d_%d = global::System.Text.Json.JsonEncodedText.Encode(%q);", index, i, string(values.Get(i).Name()))
+	}
+	p("internal static bool ReadEnum%d(ref global::System.Text.Json.Utf8JsonReader reader, out %s value)", index, typeName)
+	p("{")
+	p("if (reader.TokenType != %s.String)", tokens)
+	p("{")
+	p("value = (%s)global::ConnectNet.ConnectJson.ReadInt32(ref reader);", typeName)
+	p("return true;")
+	p("}")
+	for i := 0; i < values.Len(); i++ {
+		v := values.Get(i)
+		p("if (global::ConnectNet.ConnectJson.TextEquals(ref reader, E%d_%d)) { value = (%s)%d; return true; }", index, i, typeName, v.Number())
+	}
+	p("value = default;")
+	p("return false;")
 	p("}")
 }
 

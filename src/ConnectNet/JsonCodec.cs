@@ -28,6 +28,9 @@ public class JsonCodec : ICodec
 
     [ThreadStatic] private static Utf8JsonWriter? t_writer;
 
+    // Counts arrays as well as objects, so allow for each message level being wrapped in one.
+    private static readonly JsonReaderOptions ReaderOptions = new() { MaxDepth = DefaultRecursionLimit * 2 };
+
     private readonly JsonFormatter _formatter;
     private readonly JsonParser _parser;
 
@@ -73,15 +76,45 @@ public class JsonCodec : ICodec
 
     public T Deserialize<T>(ReadOnlyMemory<byte> data) where T : IMessage<T>, new()
     {
-        // JsonParser.Parse takes a string; the UTF-8 → UTF-16 conversion is unavoidable until
-        // the upstream library exposes a span-based parser.
-        var json = Encoding.UTF8.GetString(data.Span);
-        return _parser.Parse<T>(json);
+        var message = new T();
+        if (message is IConnectJsonMessage generated)
+        {
+            MergeGenerated(generated, data.Span);
+            return message;
+        }
+        // Without generated code, JsonParser.Parse takes a string, which costs a UTF-16 conversion.
+        return _parser.Parse<T>(Encoding.UTF8.GetString(data.Span));
     }
 
     public IMessage Deserialize(ReadOnlyMemory<byte> data, MessageParser parser)
     {
-        var json = Encoding.UTF8.GetString(data.Span);
-        return parser.ParseJson(json);
+        var message = parser.ParseFrom(Array.Empty<byte>());
+        if (message is IConnectJsonMessage generated)
+        {
+            MergeGenerated(generated, data.Span);
+            return message;
+        }
+        return parser.ParseJson(Encoding.UTF8.GetString(data.Span));
+    }
+
+    private void MergeGenerated(IConnectJsonMessage message, ReadOnlySpan<byte> utf8)
+    {
+        try
+        {
+            var reader = new Utf8JsonReader(utf8, ReaderOptions);
+            if (!reader.Read())
+                throw new FormatException("empty JSON document");
+            message.MergeJson(ref reader, _parser);
+            if (reader.Read())
+                throw new FormatException("unexpected content after the JSON document");
+        }
+        catch (JsonException ex)
+        {
+            throw new FormatException(ex.Message, ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new FormatException(ex.Message, ex);
+        }
     }
 }
