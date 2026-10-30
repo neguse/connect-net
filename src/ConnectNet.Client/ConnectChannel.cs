@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using ConnectNet.Pooling;
 using Google.Protobuf;
+using System.Collections.Concurrent;
 
 namespace ConnectNet.Client;
 
@@ -78,6 +79,8 @@ public sealed class ConnectChannel : IDisposable
     private readonly string _unaryContentType;
     private readonly string _streamingContentType;
     private readonly string? _acceptEncodingHeader;
+    private const int MaxCachedProcedureUris = 1024;
+    private readonly ConcurrentDictionary<string, Uri> _procedureUris = new();
     private bool _disposed;
 
     private ConnectChannel(HttpClient httpClient, bool ownsHttpClient, Uri baseUri, ICodec codec, ConnectChannelOptions options)
@@ -200,6 +203,15 @@ public sealed class ConnectChannel : IDisposable
     /// malicious or buggy procedure string like <c>"//evil.com/x"</c> that would otherwise
     /// cause <see cref="Uri"/> to rewrite the authority via the "network-path reference" rule.
     /// </summary>
+    private Uri ProcedureUri(string procedure)
+    {
+        if (procedure != null && _procedureUris.TryGetValue(procedure, out var cached)) return cached;
+        var uri = BuildProcedureUri(_baseUri, procedure!);
+        // Procedures normally come from generated constants; the cap keeps caller-built names bounded.
+        if (_procedureUris.Count < MaxCachedProcedureUris) _procedureUris[procedure!] = uri;
+        return uri;
+    }
+
     internal static Uri BuildProcedureUri(Uri baseUri, string procedure)
     {
         if (procedure == null) throw new ArgumentNullException(nameof(procedure));
@@ -316,7 +328,7 @@ public sealed class ConnectChannel : IDisposable
         CancellationToken ct)
         where TRes : IMessage<TRes>, new()
     {
-        var uri = BuildProcedureUri(_baseUri, procedure);
+        var uri = ProcedureUri(procedure);
 
         // Serialize directly into a pooled buffer; the HttpContent borrows it (no ToArray()).
         using var requestWriter = new ArrayPoolBufferWriter();
@@ -657,35 +669,42 @@ public sealed class ConnectChannel : IDisposable
         where TReq : IMessage<TReq>
         where TRes : IMessage<TRes>, new()
     {
-        var requestBytes = _codec.SerializeToArray(request);
-        var uri = BuildProcedureUri(_baseUri, procedure);
+        var uri = ProcedureUri(procedure);
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, uri) { Version = Http2 };
 
-        // Wrap request in envelope, compressing if configured
-        byte envelopeFlags = 0x00;
+        // Wrap request in envelope, compressing if configured. The content borrows this buffer.
+        using var envelope = new ArrayPoolBufferWriter();
         if (_channelOptions.RequestCompressor != null)
         {
-            requestBytes = _channelOptions.RequestCompressor.CompressToArray(requestBytes);
-            envelopeFlags = Envelope.FlagCompressed;
+            using var compressed = new ArrayPoolBufferWriter();
+            _channelOptions.RequestCompressor.Compress(_codec.SerializeToArray(request), compressed);
+            Envelope.WriteHeader(envelope, Envelope.FlagCompressed, compressed.WrittenMemory.Length);
+            envelope.Write(compressed.WrittenMemory.Span);
+        }
+        else if (_codec is ProtobufCodec)
+        {
+            Envelope.WriteHeader(envelope, 0x00, request.CalculateSize());
+            _codec.Serialize(request, envelope);
+        }
+        else
+        {
+            var requestBytes = _codec.SerializeToArray(request);
+            Envelope.WriteHeader(envelope, 0x00, requestBytes.Length);
+            envelope.Write(requestBytes);
         }
 
-        using var envelopeStream = new MemoryStream();
-        await Envelope.WriteAsync(envelopeStream, envelopeFlags, requestBytes, ct).ConfigureAwait(false);
-        var envelopeBytes = envelopeStream.ToArray();
-
-        httpRequest.Content = new ByteArrayContent(envelopeBytes);
-        httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue(_streamingContentType);
-        httpRequest.Headers.Add("Connect-Protocol-Version", "1");
+        httpRequest.Content = new PooledMemoryHttpContent(envelope.WrittenMemory, _streamingContentType, contentEncoding: null);
+        httpRequest.Headers.TryAddWithoutValidation("Connect-Protocol-Version", "1");
 
         // Set streaming compression headers
         if (_channelOptions.RequestCompressor != null)
         {
             httpRequest.Headers.Add("Connect-Content-Encoding", _channelOptions.RequestCompressor.Name);
         }
-        if (_channelOptions.AcceptCompression && _channelOptions.Decompressors.Count > 0)
+        if (_acceptEncodingHeader != null)
         {
-            httpRequest.Headers.Add("Connect-Accept-Encoding", string.Join(", ", _channelOptions.Decompressors.Select(d => d.Name)));
+            httpRequest.Headers.TryAddWithoutValidation("Connect-Accept-Encoding", _acceptEncodingHeader);
         }
 
         if (options?.Timeout is TimeSpan timeout)
@@ -767,7 +786,7 @@ public sealed class ConnectChannel : IDisposable
         {
             // Yield via a local function so the outer iterator method can hold the frame's
             // borrowed buffer for the lifetime of one envelope without leaking it past yield.
-            var frameNullable = await Envelope.ReadFrameAsync(responseReader, maxResponseBytes, ct).ConfigureAwait(false);
+            var frameNullable = await Envelope.ReadFrameValueAsync(responseReader, maxResponseBytes, ct).ConfigureAwait(false);
             if (frameNullable == null)
             {
                 throw new ConnectException(

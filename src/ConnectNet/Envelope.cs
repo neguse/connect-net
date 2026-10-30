@@ -130,7 +130,11 @@ public static class Envelope
     public static Task<EnvelopeFrame?> ReadFrameAsync(PipeReader reader, CancellationToken ct = default)
         => ReadFrameAsync(reader, DefaultMaxMessageBytes, ct);
 
-    public static async Task<EnvelopeFrame?> ReadFrameAsync(PipeReader reader, int maxLength, CancellationToken ct = default)
+    public static Task<EnvelopeFrame?> ReadFrameAsync(PipeReader reader, int maxLength, CancellationToken ct = default)
+        => ReadFrameValueAsync(reader, maxLength, ct).AsTask();
+
+    // A ValueTask keeps a frame already sitting in the pipe from allocating a Task per message.
+    internal static async ValueTask<EnvelopeFrame?> ReadFrameValueAsync(PipeReader reader, int maxLength, CancellationToken ct)
     {
         if (reader == null) throw new ArgumentNullException(nameof(reader));
         if (maxLength <= 0)
