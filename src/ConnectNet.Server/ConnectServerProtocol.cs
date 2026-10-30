@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
+using ConnectNet.Pooling;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
 
@@ -92,6 +95,48 @@ internal static class ConnectServerProtocol
     /// Selects a response compressor from an Accept-Encoding style header, honoring
     /// q-values: entries with q=0 are explicitly unacceptable and must not be chosen.
     /// </summary>
+    internal static int CompressMinBytes(ConnectServerOptions? options)
+        => options?.CompressMinBytes ?? ConnectServerOptions.DefaultCompressMinBytes;
+
+    /// <summary>
+    /// Returns the compressed form of <paramref name="message"/>, or null when it should go out
+    /// plain: below <paramref name="minBytes"/>, or when compression did not shrink it. The
+    /// protocol allows either per message for envelopes and per response for unary bodies.
+    /// </summary>
+    internal static ArrayPoolBufferWriter? TryCompress(ICompressor compressor, ReadOnlyMemory<byte> message, int minBytes)
+    {
+        if (message.Length < minBytes)
+            return null;
+
+        var compressed = new ArrayPoolBufferWriter();
+        try
+        {
+            compressor.Compress(message, compressed);
+            if (compressed.WrittenMemory.Length < message.Length)
+                return compressed;
+        }
+        catch
+        {
+            compressed.Dispose();
+            throw;
+        }
+        compressed.Dispose();
+        return null;
+    }
+
+    internal static async Task WriteResponseEnvelopeAsync(Stream body, ICompressor? compressor, byte[] message, int minBytes, CancellationToken ct)
+    {
+        using var compressed = compressor == null ? null : TryCompress(compressor, message, minBytes);
+        if (compressed != null)
+        {
+            await Envelope.WriteAsync(body, Envelope.FlagCompressed, compressed.WrittenMemory, ct);
+        }
+        else
+        {
+            await Envelope.WriteAsync(body, 0x00, message, ct);
+        }
+    }
+
     internal static ICompressor? NegotiateCompression(StringValues acceptEncoding, ConnectCompressorRegistry? registry)
     {
         if (registry == null || acceptEncoding.Count == 0)

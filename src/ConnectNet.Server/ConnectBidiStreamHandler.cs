@@ -131,16 +131,7 @@ internal static class ConnectBidiStreamHandler
                         headersFlushed = true;
                     }
 
-                    var msgBytes = codec.SerializeToArray(msg);
-                    if (responseCompressor != null)
-                    {
-                        msgBytes = responseCompressor.CompressToArray(msgBytes);
-                        await Envelope.WriteAsync(response.Body, Envelope.FlagCompressed, msgBytes, ct);
-                    }
-                    else
-                    {
-                        await Envelope.WriteAsync(response.Body, 0x00, msgBytes, ct);
-                    }
+                    await ConnectServerProtocol.WriteResponseEnvelopeAsync(response.Body, responseCompressor, codec.SerializeToArray(msg), ConnectServerProtocol.CompressMinBytes(serverOptions), ct);
                     await response.Body.FlushAsync(ct);
                 }
                 // If no messages were yielded, still write headers

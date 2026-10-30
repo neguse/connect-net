@@ -143,26 +143,7 @@ internal static class ConnectUnaryHandler
             using var msgWriter = new ArrayPoolBufferWriter();
             codec.Serialize(responseMessage, msgWriter);
 
-            ICompressor? selectedCompressor = null;
-            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding))
-            {
-                selectedCompressor = ConnectServerProtocol.NegotiateCompression(acceptEncoding, compressorRegistry);
-                if (selectedCompressor != null)
-                {
-                    response.Headers["Content-Encoding"] = selectedCompressor.Name;
-                }
-            }
-
-            if (selectedCompressor != null)
-            {
-                using var compressedWriter = new ArrayPoolBufferWriter();
-                selectedCompressor.Compress(msgWriter.WrittenMemory, compressedWriter);
-                await response.Body.WriteAsync(compressedWriter.WrittenMemory, ct);
-            }
-            else
-            {
-                await response.Body.WriteAsync(msgWriter.WrittenMemory, ct);
-            }
+            await WriteResponseBodyAsync(httpContext, compressorRegistry, serverOptions, msgWriter.WrittenMemory, ct);
         }
         catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
         {
@@ -189,6 +170,29 @@ internal static class ConnectUnaryHandler
             timeoutCts?.Dispose();
             rawWriter?.Dispose();
             decompressedWriter?.Dispose();
+        }
+    }
+
+    private static async Task WriteResponseBodyAsync(HttpContext httpContext, ConnectCompressorRegistry? compressorRegistry, ConnectServerOptions? serverOptions, ReadOnlyMemory<byte> message, CancellationToken ct)
+    {
+        var response = httpContext.Response;
+        var minBytes = ConnectServerProtocol.CompressMinBytes(serverOptions);
+
+        ICompressor? compressor = null;
+        if (message.Length >= minBytes && httpContext.Request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding))
+        {
+            compressor = ConnectServerProtocol.NegotiateCompression(acceptEncoding, compressorRegistry);
+        }
+
+        using var compressed = compressor == null ? null : ConnectServerProtocol.TryCompress(compressor, message, minBytes);
+        if (compressed != null)
+        {
+            response.Headers["Content-Encoding"] = compressor!.Name;
+            await response.Body.WriteAsync(compressed.WrittenMemory, ct);
+        }
+        else
+        {
+            await response.Body.WriteAsync(message, ct);
         }
     }
 
@@ -389,26 +393,7 @@ internal static class ConnectUnaryHandler
             using var msgWriter = new ArrayPoolBufferWriter();
             codec.Serialize(responseMessage, msgWriter);
 
-            ICompressor? selectedCompressor = null;
-            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding))
-            {
-                selectedCompressor = ConnectServerProtocol.NegotiateCompression(acceptEncoding, compressorRegistry);
-                if (selectedCompressor != null)
-                {
-                    response.Headers["Content-Encoding"] = selectedCompressor.Name;
-                }
-            }
-
-            if (selectedCompressor != null)
-            {
-                using var compressedWriter = new ArrayPoolBufferWriter();
-                selectedCompressor.Compress(msgWriter.WrittenMemory, compressedWriter);
-                await response.Body.WriteAsync(compressedWriter.WrittenMemory, ct);
-            }
-            else
-            {
-                await response.Body.WriteAsync(msgWriter.WrittenMemory, ct);
-            }
+            await WriteResponseBodyAsync(httpContext, compressorRegistry, serverOptions, msgWriter.WrittenMemory, ct);
         }
         catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
         {

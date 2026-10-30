@@ -43,6 +43,16 @@ public class ConnectServerOptions
     /// </summary>
     public bool RequireConnectProtocolHeader { get; set; } = false;
 
+    /// <summary>The default value of <see cref="CompressMinBytes"/>.</summary>
+    public const int DefaultCompressMinBytes = 1024;
+
+    /// <summary>
+    /// Responses smaller than this many bytes are sent uncompressed even when the client
+    /// accepts compression. Compressing a small message costs more CPU than the bandwidth it
+    /// saves and can make the message larger. Set to 0 to consider every message.
+    /// </summary>
+    public int CompressMinBytes { get; set; } = DefaultCompressMinBytes;
+
     internal int EffectiveReceiveLimit
         => MessageReceiveLimit == 0
             ? int.MaxValue

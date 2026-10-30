@@ -112,16 +112,7 @@ internal static class ConnectClientStreamHandler
                 }
 
                 // Write single response envelope
-                var responseBytes = codec.SerializeToArray(result);
-                if (responseCompressor != null)
-                {
-                    responseBytes = responseCompressor.CompressToArray(responseBytes);
-                    await Envelope.WriteAsync(response.Body, Envelope.FlagCompressed, responseBytes, ct);
-                }
-                else
-                {
-                    await Envelope.WriteAsync(response.Body, 0x00, responseBytes, ct);
-                }
+                await ConnectServerProtocol.WriteResponseEnvelopeAsync(response.Body, responseCompressor, codec.SerializeToArray(result), ConnectServerProtocol.CompressMinBytes(serverOptions), ct);
             }
             catch (ConnectException ex)
             {

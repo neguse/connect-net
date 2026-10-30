@@ -299,7 +299,7 @@ public class ServerHardeningTests
         using var server = CreateServer();
         using var client = server.CreateClient();
 
-        using var httpRequest = BuildUnaryRequest("/hardening.Test/Echo", new HelloRequest { Name = "q5" }.ToByteArray());
+        using var httpRequest = BuildUnaryRequest("/hardening.Test/Echo", new HelloRequest { Name = new string('a', ConnectServerOptions.DefaultCompressMinBytes) }.ToByteArray());
         httpRequest.Headers.Add("Accept-Encoding", "gzip;q=0.5");
         var response = await client.SendAsync(httpRequest);
 
