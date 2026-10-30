@@ -42,9 +42,10 @@ message HelloResponse { string message = 1; }
 protoc --csharp_out=. --connect-csharp_out=. greeter.proto
 ```
 
-This generates two files:
+This generates three files:
 - `Greeter.cs` — Protobuf message classes (from `--csharp_out`)
 - `GreeterService.connect.cs` — Connect RPC client, server base class, and service definition (from `--connect-csharp_out`)
+- `greeter.connect-json.cs` — proto-JSON code that `JsonCodec` uses for these messages (from `--connect-csharp_out`)
 
 ### Server
 

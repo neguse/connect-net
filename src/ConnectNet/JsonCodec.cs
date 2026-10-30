@@ -1,6 +1,9 @@
 using System;
 using System.Buffers;
+using System.IO;
 using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using ConnectNet.Pooling;
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
@@ -14,6 +17,16 @@ public class JsonCodec : ICodec
     /// to defend against pathologically deep JSON payloads in either request or response bodies.
     /// </summary>
     public const int DefaultRecursionLimit = 32;
+
+    // Generated writers emit well-formed JSON by construction, and text that needs no escaping
+    // for HTML stays as-is, matching JsonFormatter.
+    private static readonly JsonWriterOptions WriterOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        SkipValidation = true,
+    };
+
+    [ThreadStatic] private static Utf8JsonWriter? t_writer;
 
     private readonly JsonFormatter _formatter;
     private readonly JsonParser _parser;
@@ -40,9 +53,17 @@ public class JsonCodec : ICodec
     public void Serialize(IMessage message, IBufferWriter<byte> destination)
     {
         if (destination == null) throw new ArgumentNullException(nameof(destination));
-        // Google.Protobuf's JsonFormatter only produces strings; we must encode to UTF-8 once.
-        // The intermediate string allocation is unavoidable until the upstream library exposes
-        // a Utf8JsonWriter-compatible formatter.
+        if (message is IConnectJsonMessage generated)
+        {
+            var writer = t_writer ??= new Utf8JsonWriter(Stream.Null, WriterOptions);
+            writer.Reset(destination);
+            generated.WriteJson(writer, _formatter);
+            writer.Flush();
+            // Drop the reference so a cached writer never keeps the destination alive.
+            writer.Reset(Stream.Null);
+            return;
+        }
+        // Without generated code, JsonFormatter only produces strings; we must encode to UTF-8 once.
         var json = _formatter.Format(message);
         var byteCount = Encoding.UTF8.GetByteCount(json);
         var dest = destination.GetSpan(byteCount);
