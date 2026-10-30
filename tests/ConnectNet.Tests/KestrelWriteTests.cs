@@ -10,6 +10,7 @@ using ConnectNet;
 using ConnectNet.Client;
 using ConnectNet.Server;
 using ConnectNet.Tests.Proto;
+using Google.Protobuf;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -120,6 +121,76 @@ public class KestrelWriteTests : IAsyncLifetime
             }
             Assert.Equal(3, seen);
         }
+    }
+
+    [Theory]
+    [MemberData(nameof(Transports))]
+    public async Task Unary_SmallAndLargeMessagesSurviveConcurrency(bool http2)
+    {
+        var (client, lifetime) = Client(http2);
+        using (lifetime)
+        {
+            await Task.WhenAll(Enumerable.Range(0, 64).Select(async i =>
+            {
+                var name = i % 2 == 0 ? "small" : new string('a', 200_000);
+                var reply = await client.SayHelloAsync(new HelloRequest { Name = name });
+                Assert.Equal(name, reply.Message);
+            }));
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Transports))]
+    public async Task Unary_EmptyMessage_Succeeds(bool http2)
+    {
+        var (client, lifetime) = Client(http2);
+        using (lifetime)
+        {
+            var reply = await client.SayHelloAsync(new HelloRequest());
+            Assert.Equal("", reply.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData("small", null)]
+    [InlineData("small", "gzip")]
+    [InlineData("large", null)]
+    [InlineData("large", "gzip")]
+    public async Task Unary_Http1_StatesContentLength(string size, string? acceptEncoding)
+    {
+        var name = size == "small" ? "x" : new string('a', 8192);
+        using var http = new HttpClient(new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.None });
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{_http1Port}/example.GreeterService/SayHello")
+        {
+            Content = new ByteArrayContent(new HelloRequest { Name = name }.ToByteArray()),
+        };
+        request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/proto");
+        if (acceptEncoding != null) request.Headers.TryAddWithoutValidation("Accept-Encoding", acceptEncoding);
+
+        using var response = await http.SendAsync(request);
+        var body = await response.Content.ReadAsByteArrayAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Null(response.Headers.TransferEncodingChunked);
+        Assert.Equal(body.Length, response.Content.Headers.ContentLength);
+        Assert.Equal(size == "large" && acceptEncoding != null, response.Content.Headers.ContentEncoding.Contains("gzip"));
+    }
+
+    [Fact]
+    public async Task Unary_ErrorAfterChoosingLength_IsNotTruncated()
+    {
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{_http1Port}/example.GreeterService/SayHello")
+        {
+            Content = new ByteArrayContent(new byte[] { 0xFF }),
+        };
+        request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/proto");
+
+        using var response = await http.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("invalid_argument", body);
     }
 
     private sealed class PriorKnowledgeHandler(HttpMessageHandler inner) : DelegatingHandler(inner)

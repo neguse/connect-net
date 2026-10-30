@@ -133,12 +133,7 @@ internal static class ConnectUnaryHandler
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
             }
 
-            // Serialize directly into a pooled buffer writer; the response is then either
-            // written as-is or piped through a compressor that also writes into the pool.
-            using var msgWriter = new ArrayPoolBufferWriter();
-            codec.Serialize(responseMessage, msgWriter);
-
-            await WriteResponseBodyAsync(httpContext, compressorRegistry, serverOptions, msgWriter.WrittenMemory, ct);
+            await WriteResponseBodyAsync(httpContext, codec, responseMessage, compressorRegistry, serverOptions, ct);
         }
         catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
         {
@@ -168,27 +163,41 @@ internal static class ConnectUnaryHandler
         }
     }
 
-    private static async Task WriteResponseBodyAsync(HttpContext httpContext, ConnectCompressorRegistry? compressorRegistry, ConnectServerOptions? serverOptions, ReadOnlyMemory<byte> message, CancellationToken ct)
+    private static async Task WriteResponseBodyAsync(HttpContext httpContext, ICodec codec, IMessage message, ConnectCompressorRegistry? compressorRegistry, ConnectServerOptions? serverOptions, CancellationToken ct)
     {
         var response = httpContext.Response;
         var minBytes = ConnectServerProtocol.CompressMinBytes(serverOptions);
+        var acceptsCompression = httpContext.Request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding);
+
+        // Protobuf knows its size up front, so a body that will not be compressed skips the
+        // intermediate buffer. Google.Protobuf calls Advance before its first GetSpan, which
+        // Kestrel rejects unless memory has already been leased.
+        if (codec is ProtobufCodec && message.CalculateSize() is var size && (size < minBytes || !acceptsCompression))
+        {
+            response.ContentLength = size;
+            response.BodyWriter.GetSpan(size);
+            codec.Serialize(message, response.BodyWriter);
+            await Envelope.FlushAsync(response.BodyWriter, ct);
+            return;
+        }
+
+        using var buffer = new ArrayPoolBufferWriter();
+        codec.Serialize(message, buffer);
 
         ICompressor? compressor = null;
-        if (message.Length >= minBytes && httpContext.Request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding))
+        if (acceptsCompression && buffer.WrittenMemory.Length >= minBytes)
         {
             compressor = ConnectServerProtocol.NegotiateCompression(acceptEncoding, compressorRegistry);
         }
 
-        using var compressed = compressor == null ? null : ConnectServerProtocol.TryCompress(compressor, message, minBytes);
+        using var compressed = compressor == null ? null : ConnectServerProtocol.TryCompress(compressor, buffer.WrittenMemory, minBytes);
         if (compressed != null)
         {
             response.Headers["Content-Encoding"] = compressor!.Name;
-            await response.Body.WriteAsync(compressed.WrittenMemory, ct);
         }
-        else
-        {
-            await response.Body.WriteAsync(message, ct);
-        }
+        var body = (compressed ?? buffer).WrittenMemory;
+        response.ContentLength = body.Length;
+        await response.BodyWriter.WriteAsync(body, ct);
     }
 
     /// <summary>
@@ -208,6 +217,7 @@ internal static class ConnectUnaryHandler
         }
         WriteContextHeaders(response, context);
         response.Headers.Remove("Content-Encoding");
+        response.ContentLength = null;
         response.StatusCode = ConnectException.ToHttpStatus(error.Code);
         response.ContentType = "application/json";
         await response.WriteAsync(error.ToJson());
@@ -378,12 +388,7 @@ internal static class ConnectUnaryHandler
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
             }
 
-            // Serialize directly into a pooled buffer writer; the response is then either
-            // written as-is or piped through a compressor that also writes into the pool.
-            using var msgWriter = new ArrayPoolBufferWriter();
-            codec.Serialize(responseMessage, msgWriter);
-
-            await WriteResponseBodyAsync(httpContext, compressorRegistry, serverOptions, msgWriter.WrittenMemory, ct);
+            await WriteResponseBodyAsync(httpContext, codec, responseMessage, compressorRegistry, serverOptions, ct);
         }
         catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
         {
