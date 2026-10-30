@@ -126,8 +126,7 @@ internal static class ConnectBidiStreamHandler
                         headersFlushed = true;
                     }
 
-                    await ConnectServerProtocol.WriteResponseEnvelopeAsync(response.Body, responseCompressor, codec.SerializeToArray(msg), ConnectServerProtocol.CompressMinBytes(serverOptions), ct);
-                    await response.Body.FlushAsync(ct);
+                    await ConnectServerProtocol.WriteResponseEnvelopeAsync(response.BodyWriter, codec, msg, responseCompressor, ConnectServerProtocol.CompressMinBytes(serverOptions), ct);
                 }
                 // If no messages were yielded, still write headers
                 if (!headersFlushed)
@@ -183,9 +182,7 @@ internal static class ConnectBidiStreamHandler
             }
 
             // Write EndStream envelope
-            var endStreamJson = ConnectServerStreamHandler.BuildEndStreamJson(streamError, context);
-            await Envelope.WriteAsync(response.Body, Envelope.FlagEndStream, Encoding.UTF8.GetBytes(endStreamJson), httpContext.RequestAborted);
-            await response.Body.FlushAsync(httpContext.RequestAborted);
+            await ConnectServerStreamHandler.WriteEndStreamAsync(response, streamError, context, httpContext.RequestAborted);
         }
         catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
         {

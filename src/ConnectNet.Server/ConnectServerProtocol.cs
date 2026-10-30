@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Linq;
 using System.Threading;
+using System.IO.Pipelines;
 using System.Threading.Tasks;
 using ConnectNet.Pooling;
+using Google.Protobuf;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
 
@@ -138,16 +139,30 @@ internal static class ConnectServerProtocol
         return null;
     }
 
-    internal static async Task WriteResponseEnvelopeAsync(Stream body, ICompressor? compressor, byte[] message, int minBytes, CancellationToken ct)
+    /// <summary>
+    /// Writes one message as a single envelope and flushes it to the client. Protobuf knows its
+    /// size up front, so a message that will not be compressed skips the intermediate buffer.
+    /// </summary>
+    internal static async Task WriteResponseEnvelopeAsync(PipeWriter writer, ICodec codec, IMessage message, ICompressor? compressor, int minBytes, CancellationToken ct)
     {
-        using var compressed = compressor == null ? null : TryCompress(compressor, message, minBytes);
+        if (codec is ProtobufCodec && message.CalculateSize() is var size && (compressor == null || size < minBytes))
+        {
+            Envelope.WriteHeader(writer, 0x00, size);
+            codec.Serialize(message, writer);
+            await Envelope.FlushAsync(writer, ct);
+            return;
+        }
+
+        using var buffer = new ArrayPoolBufferWriter();
+        codec.Serialize(message, buffer);
+        using var compressed = compressor == null ? null : TryCompress(compressor, buffer.WrittenMemory, minBytes);
         if (compressed != null)
         {
-            await Envelope.WriteAsync(body, Envelope.FlagCompressed, compressed.WrittenMemory, ct);
+            await Envelope.WriteAsync(writer, Envelope.FlagCompressed, compressed.WrittenMemory, ct);
         }
         else
         {
-            await Envelope.WriteAsync(body, 0x00, message, ct);
+            await Envelope.WriteAsync(writer, 0x00, buffer.WrittenMemory, ct);
         }
     }
 

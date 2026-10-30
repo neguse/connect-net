@@ -201,8 +201,7 @@ internal static class ConnectServerStreamHandler
                         headersFlushed = true;
                     }
 
-                    await ConnectServerProtocol.WriteResponseEnvelopeAsync(response.Body, responseCompressor, codec.SerializeToArray(msg), ConnectServerProtocol.CompressMinBytes(serverOptions), ct);
-                    await response.Body.FlushAsync(ct);
+                    await ConnectServerProtocol.WriteResponseEnvelopeAsync(response.BodyWriter, codec, msg, responseCompressor, ConnectServerProtocol.CompressMinBytes(serverOptions), ct);
                 }
                 // If no messages were yielded, still write headers
                 if (!headersFlushed)
@@ -247,9 +246,7 @@ internal static class ConnectServerStreamHandler
             }
 
             // Write EndStream envelope
-            var endStreamJson = BuildEndStreamJson(streamError, context);
-            await Envelope.WriteAsync(response.Body, Envelope.FlagEndStream, Encoding.UTF8.GetBytes(endStreamJson), httpContext.RequestAborted);
-            await response.Body.FlushAsync(httpContext.RequestAborted);
+            await WriteEndStreamAsync(response, streamError, context, httpContext.RequestAborted);
         }
         catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
         {
@@ -270,6 +267,16 @@ internal static class ConnectServerStreamHandler
         {
             timeoutCts?.Dispose();
         }
+    }
+
+    private static readonly byte[] EmptyEndStream = Encoding.UTF8.GetBytes(BuildEndStreamJson(null, new ConnectContext()));
+
+    internal static Task WriteEndStreamAsync(HttpResponse response, ConnectException? error, ConnectContext context, CancellationToken ct)
+    {
+        var payload = error == null && context.ResponseTrailersOrEmpty.Count == 0
+            ? EmptyEndStream
+            : Encoding.UTF8.GetBytes(BuildEndStreamJson(error, context));
+        return Envelope.WriteAsync(response.BodyWriter, Envelope.FlagEndStream, payload, ct);
     }
 
     internal static string BuildEndStreamJson(ConnectException? error, ConnectContext context)

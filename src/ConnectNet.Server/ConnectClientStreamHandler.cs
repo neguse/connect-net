@@ -107,7 +107,7 @@ internal static class ConnectClientStreamHandler
                 }
 
                 // Write single response envelope
-                await ConnectServerProtocol.WriteResponseEnvelopeAsync(response.Body, responseCompressor, codec.SerializeToArray(result), ConnectServerProtocol.CompressMinBytes(serverOptions), ct);
+                await ConnectServerProtocol.WriteResponseEnvelopeAsync(response.BodyWriter, codec, result, responseCompressor, ConnectServerProtocol.CompressMinBytes(serverOptions), ct);
             }
             catch (ConnectException ex)
             {
@@ -143,9 +143,7 @@ internal static class ConnectClientStreamHandler
             }
 
             // Write EndStream envelope
-            var endStreamJson = ConnectServerStreamHandler.BuildEndStreamJson(streamError, context);
-            await Envelope.WriteAsync(response.Body, Envelope.FlagEndStream, Encoding.UTF8.GetBytes(endStreamJson), httpContext.RequestAborted);
-            await response.Body.FlushAsync(httpContext.RequestAborted);
+            await ConnectServerStreamHandler.WriteEndStreamAsync(response, streamError, context, httpContext.RequestAborted);
         }
         catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
         {
