@@ -1,0 +1,128 @@
+syntax = "proto3";
+package jsonmapping;
+option csharp_namespace = "ConnectNet.Tests.Proto";
+
+import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "greeter.proto";
+
+enum TopEnum {
+  TOP_ZERO = 0;
+  TOP_ONE = 1;
+}
+
+enum AliasedEnum {
+  option allow_alias = true;
+  ALIAS_ZERO = 0;
+  ALIAS_FIRST = 1;
+  ALIAS_SECOND = 1;
+}
+
+message Scalars {
+  double f_double = 1;
+  float f_float = 2;
+  int32 f_int32 = 3;
+  int64 f_int64 = 4;
+  uint32 f_uint32 = 5;
+  uint64 f_uint64 = 6;
+  sint32 f_sint32 = 7;
+  sint64 f_sint64 = 8;
+  fixed32 f_fixed32 = 9;
+  fixed64 f_fixed64 = 10;
+  sfixed32 f_sfixed32 = 11;
+  sfixed64 f_sfixed64 = 12;
+  bool f_bool = 13;
+  string f_string = 14;
+  bytes f_bytes = 15;
+  TopEnum f_enum = 16;
+  AliasedEnum f_aliased = 17;
+  string custom_name = 18 [json_name = "renamed"];
+  string snake_case_2_digits = 19;
+}
+
+message Containers {
+  message Nested {
+    enum NestedEnum {
+      NESTED_ZERO = 0;
+      NESTED_ONE = 1;
+    }
+    int32 value = 1;
+    NestedEnum kind = 2;
+    Nested child = 3;
+  }
+
+  repeated int32 r_int32 = 1;
+  repeated int64 r_int64 = 2;
+  repeated double r_double = 3;
+  repeated string r_string = 4;
+  repeated bytes r_bytes = 5;
+  repeated TopEnum r_enum = 6;
+  repeated Nested r_nested = 7;
+  map<string, int32> m_string = 8;
+  map<int32, string> m_int32 = 9;
+  map<int64, bool> m_int64 = 10;
+  map<uint32, double> m_uint32 = 11;
+  map<uint64, bytes> m_uint64 = 12;
+  map<bool, TopEnum> m_bool = 13;
+  map<string, Nested> m_nested = 14;
+  Nested nested = 15;
+  example.HelloRequest imported = 16;
+}
+
+message Presence {
+  optional int32 o_int32 = 1;
+  optional string o_string = 2;
+  optional TopEnum o_enum = 3;
+  optional bool o_bool = 4;
+  oneof choice {
+    int32 c_int32 = 5;
+    string c_string = 6;
+    Containers.Nested c_message = 7;
+    google.protobuf.Int32Value c_wrapper = 8;
+    TopEnum c_enum = 9;
+  }
+}
+
+message WellKnown {
+  google.protobuf.Timestamp timestamp = 1;
+  google.protobuf.Duration duration = 2;
+  google.protobuf.Struct struct = 3;
+  google.protobuf.Value value = 4;
+  google.protobuf.ListValue list = 5;
+  google.protobuf.Any any = 6;
+  google.protobuf.Int32Value w_int32 = 7;
+  google.protobuf.Int64Value w_int64 = 8;
+  google.protobuf.UInt32Value w_uint32 = 9;
+  google.protobuf.UInt64Value w_uint64 = 10;
+  google.protobuf.BoolValue w_bool = 11;
+  google.protobuf.StringValue w_string = 12;
+  google.protobuf.BytesValue w_bytes = 13;
+  google.protobuf.DoubleValue w_double = 14;
+  google.protobuf.FloatValue w_float = 15;
+  repeated google.protobuf.Timestamp r_timestamp = 16;
+  map<string, google.protobuf.Duration> m_duration = 17;
+}
+
+// Shapes the generator leaves to Google.Protobuf.
+message NotGenerated {
+  repeated google.protobuf.Int32Value r_wrapper = 1;
+  map<string, google.protobuf.StringValue> m_wrapper = 2;
+  google.protobuf.NullValue null_value = 3;
+}
+
+// Member names protoc's C# generator has to rename.
+message Renames {
+  string types = 1;
+  string descriptor = 2;
+  string to_string = 3;
+  string equals = 4;
+  string parser = 5;
+  string renames = 6;
+  oneof kind {
+    string none = 7;
+    string class = 8;
+  }
+}

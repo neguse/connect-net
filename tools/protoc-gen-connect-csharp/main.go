@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"google.golang.org/protobuf/compiler/protogen"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/pluginpb"
 )
@@ -19,6 +20,7 @@ func main() {
 				if err := generateFile(plugin, file); err != nil {
 					return err
 				}
+				generateJSON(plugin, file)
 			}
 		}
 		return nil
@@ -30,7 +32,7 @@ func generateFile(plugin *protogen.Plugin, file *protogen.File) error {
 		return nil
 	}
 
-	csNamespace := getCSharpNamespace(file)
+	csNamespace := getCSharpNamespace(file.Desc)
 
 	for _, service := range file.Services {
 		// Use the proto file's directory for the output path, not Go import paths
@@ -47,15 +49,15 @@ func generateFile(plugin *protogen.Plugin, file *protogen.File) error {
 	return nil
 }
 
-func getCSharpNamespace(file *protogen.File) string {
-	if opts := file.Desc.Options(); opts != nil {
+func getCSharpNamespace(file protoreflect.FileDescriptor) string {
+	if opts := file.Options(); opts != nil {
 		fdp, ok := opts.(*descriptorpb.FileOptions)
 		if ok && fdp.CsharpNamespace != nil {
 			return *fdp.CsharpNamespace
 		}
 	}
 	// Derive from package name: capitalize each segment
-	pkg := string(file.Desc.Package())
+	pkg := string(file.Package())
 	if pkg == "" {
 		return ""
 	}

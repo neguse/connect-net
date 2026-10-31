@@ -1,6 +1,9 @@
 using System;
 using System.Buffers;
+using System.IO;
 using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using ConnectNet.Pooling;
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
@@ -14,6 +17,19 @@ public class JsonCodec : ICodec
     /// to defend against pathologically deep JSON payloads in either request or response bodies.
     /// </summary>
     public const int DefaultRecursionLimit = 32;
+
+    // Generated writers emit well-formed JSON by construction, and text that needs no escaping
+    // for HTML stays as-is, matching JsonFormatter.
+    private static readonly JsonWriterOptions WriterOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        SkipValidation = true,
+    };
+
+    [ThreadStatic] private static Utf8JsonWriter? t_writer;
+
+    // Counts arrays as well as objects, so allow for each message level being wrapped in one.
+    private static readonly JsonReaderOptions ReaderOptions = new() { MaxDepth = DefaultRecursionLimit * 2 };
 
     private readonly JsonFormatter _formatter;
     private readonly JsonParser _parser;
@@ -40,9 +56,17 @@ public class JsonCodec : ICodec
     public void Serialize(IMessage message, IBufferWriter<byte> destination)
     {
         if (destination == null) throw new ArgumentNullException(nameof(destination));
-        // Google.Protobuf's JsonFormatter only produces strings; we must encode to UTF-8 once.
-        // The intermediate string allocation is unavoidable until the upstream library exposes
-        // a Utf8JsonWriter-compatible formatter.
+        if (message is IConnectJsonMessage generated)
+        {
+            var writer = t_writer ??= new Utf8JsonWriter(Stream.Null, WriterOptions);
+            writer.Reset(destination);
+            generated.WriteJson(writer, _formatter);
+            writer.Flush();
+            // Drop the reference so a cached writer never keeps the destination alive.
+            writer.Reset(Stream.Null);
+            return;
+        }
+        // Without generated code, JsonFormatter only produces strings; we must encode to UTF-8 once.
         var json = _formatter.Format(message);
         var byteCount = Encoding.UTF8.GetByteCount(json);
         var dest = destination.GetSpan(byteCount);
@@ -52,15 +76,45 @@ public class JsonCodec : ICodec
 
     public T Deserialize<T>(ReadOnlyMemory<byte> data) where T : IMessage<T>, new()
     {
-        // JsonParser.Parse takes a string; the UTF-8 → UTF-16 conversion is unavoidable until
-        // the upstream library exposes a span-based parser.
-        var json = Encoding.UTF8.GetString(data.Span);
-        return _parser.Parse<T>(json);
+        var message = new T();
+        if (message is IConnectJsonMessage generated)
+        {
+            MergeGenerated(generated, data.Span);
+            return message;
+        }
+        // Without generated code, JsonParser.Parse takes a string, which costs a UTF-16 conversion.
+        return _parser.Parse<T>(Encoding.UTF8.GetString(data.Span));
     }
 
     public IMessage Deserialize(ReadOnlyMemory<byte> data, MessageParser parser)
     {
-        var json = Encoding.UTF8.GetString(data.Span);
-        return parser.ParseJson(json);
+        var message = parser.ParseFrom(Array.Empty<byte>());
+        if (message is IConnectJsonMessage generated)
+        {
+            MergeGenerated(generated, data.Span);
+            return message;
+        }
+        return parser.ParseJson(Encoding.UTF8.GetString(data.Span));
+    }
+
+    private void MergeGenerated(IConnectJsonMessage message, ReadOnlySpan<byte> utf8)
+    {
+        try
+        {
+            var reader = new Utf8JsonReader(utf8, ReaderOptions);
+            if (!reader.Read())
+                throw new FormatException("empty JSON document");
+            message.MergeJson(ref reader, _parser);
+            if (reader.Read())
+                throw new FormatException("unexpected content after the JSON document");
+        }
+        catch (JsonException ex)
+        {
+            throw new FormatException(ex.Message, ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new FormatException(ex.Message, ex);
+        }
     }
 }
