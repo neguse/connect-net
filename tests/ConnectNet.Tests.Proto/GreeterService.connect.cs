@@ -7,10 +7,13 @@ using System.Threading;
 using System.Threading.Tasks;
 using ConnectNet;
 using ConnectNet.Client;
+#if !UNITY_2021_3_OR_NEWER
 using ConnectNet.Server;
+#endif
 using Google.Protobuf;
 
-namespace ConnectNet.Tests.Proto;
+namespace ConnectNet.Tests.Proto
+{
 
 public static class GreeterServiceMethods
 {
@@ -68,6 +71,7 @@ public abstract class GreeterServiceBase
 
 }
 
+#if !UNITY_2021_3_OR_NEWER
 public class GreeterServiceDefinition : IConnectServiceDefinition
 {
     public static GreeterServiceDefinition Instance { get; } = new();
@@ -109,4 +113,6 @@ public class GreeterServiceDefinition : IConnectServiceDefinition
             yield return (T)item;
     }
 
+}
+#endif
 }

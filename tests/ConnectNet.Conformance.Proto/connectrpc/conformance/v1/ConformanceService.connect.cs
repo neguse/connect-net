@@ -7,10 +7,13 @@ using System.Threading;
 using System.Threading.Tasks;
 using ConnectNet;
 using ConnectNet.Client;
+#if !UNITY_2021_3_OR_NEWER
 using ConnectNet.Server;
+#endif
 using Google.Protobuf;
 
-namespace Connectrpc.Conformance.V1;
+namespace Connectrpc.Conformance.V1
+{
 
 public static class ConformanceServiceMethods
 {
@@ -84,10 +87,12 @@ public abstract class ConformanceServiceBase
 
 }
 
+#if !UNITY_2021_3_OR_NEWER
 public class ConformanceServiceDefinition : IConnectServiceDefinition
 {
     public static ConformanceServiceDefinition Instance { get; } = new();
     public string ServiceName => ConformanceServiceMethods.ServiceName;
+    public Google.Protobuf.Reflection.FileDescriptor? FileDescriptor => ServiceReflection.Descriptor;
     public IReadOnlyList<ConnectMethodDescriptor> Methods { get; } = new ConnectMethodDescriptor[]
     {
         new ConnectMethodDescriptor(
@@ -132,4 +137,6 @@ public class ConformanceServiceDefinition : IConnectServiceDefinition
             yield return (T)item;
     }
 
+}
+#endif
 }

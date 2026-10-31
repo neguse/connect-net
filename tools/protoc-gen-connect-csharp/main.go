@@ -110,12 +110,17 @@ func generateService(g *protogen.GeneratedFile, file *protogen.File, service *pr
 	p("using System.Threading.Tasks;")
 	p("using ConnectNet;")
 	p("using ConnectNet.Client;")
+	// Unity projects have no ConnectNet.Server (it targets .NET 10) and compile with C# 9,
+	// which rules out file-scoped namespaces.
+	p("#if !UNITY_2021_3_OR_NEWER")
 	p("using ConnectNet.Server;")
+	p("#endif")
 	p("using Google.Protobuf;")
 	p("")
 
 	if csNamespace != "" {
-		p("namespace %s;", csNamespace)
+		p("namespace %s", csNamespace)
+		p("{")
 	}
 	p("")
 
@@ -239,6 +244,7 @@ func generateService(g *protogen.GeneratedFile, file *protogen.File, service *pr
 	p("")
 
 	// --- Service Definition ---
+	p("#if !UNITY_2021_3_OR_NEWER")
 	p("public class %sDefinition : IConnectServiceDefinition", serviceName)
 	p("{")
 	p("    public static %sDefinition Instance { get; } = new();", serviceName)
@@ -334,6 +340,11 @@ func generateService(g *protogen.GeneratedFile, file *protogen.File, service *pr
 	}
 
 	p("}")
+	p("#endif")
+
+	if csNamespace != "" {
+		p("}")
+	}
 }
 
 // isNoSideEffects reports whether the method is declared side-effect free via
