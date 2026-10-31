@@ -538,6 +538,10 @@ connect-net passes **100%** of the [connectrpc/conformance](https://github.com/c
 conformance suite (2,872 cases, strict error and message comparison) and every required file of the
 pinned [cel-spec](https://github.com/google/cel-spec) corpus (1,958 cases); both run in CI.
 
+## Known issues
+
+**HTTP/2 responses over 64 KiB can stall in Kestrel.** Under load, a response larger than the client's initial stream window occasionally never reaches the client, and the call waits forever. This reproduces with plain ASP.NET Core and `HttpClient` on ASP.NET Core 10.0.12, without this library. Set `CallOptions.Timeout` on such calls so that a stalled call fails.
+
 ## Installing
 
 The library is not yet published to NuGet. Build from source and reference the projects directly:
