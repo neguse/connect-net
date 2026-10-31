@@ -97,26 +97,14 @@ public class CompressionTests
     }
 
     [Fact]
-    public async Task Unary_BelowDefaultMinBytes_NotCompressed()
+    public async Task Unary_ByDefault_NotCompressed()
     {
         var (server, _) = CreateSetup();
         using (server)
         {
-            using var request = UnaryRequest(Compressible(ConnectServerOptions.DefaultCompressMinBytes - 1));
+            using var request = UnaryRequest(Compressible(8192));
             using var response = await server.CreateClient().SendAsync(request);
             Assert.Empty(response.Content.Headers.ContentEncoding);
-        }
-    }
-
-    [Fact]
-    public async Task Unary_AtDefaultMinBytes_Compressed()
-    {
-        var (server, _) = CreateSetup();
-        using (server)
-        {
-            using var request = UnaryRequest(Compressible(ConnectServerOptions.DefaultCompressMinBytes));
-            using var response = await server.CreateClient().SendAsync(request);
-            Assert.Contains("gzip", response.Content.Headers.ContentEncoding);
         }
     }
 
@@ -186,10 +174,10 @@ public class CompressionTests
     [Fact]
     public async Task ServerStream_LargeMessage_ClientDecompresses()
     {
-        var (server, channel) = CreateSetup();
+        var (server, channel) = CreateSetup(configure: o => o.CompressMinBytes = 1024);
         using (server)
         {
-            var name = new string('a', ConnectServerOptions.DefaultCompressMinBytes);
+            var name = new string('a', 1024);
             var messages = new List<HelloResponse>();
             await foreach (var response in channel.ServerStreamAsync<HelloRequest, HelloResponse>(
                 "/example.GreeterService/SayHelloStream", new HelloRequest { Name = name }))
