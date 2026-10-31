@@ -186,12 +186,14 @@ public static class ConnectJson
     public static long ReadInt64(ref Utf8JsonReader reader)
     {
         if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt64(out var value)) return value;
+        if (IsPlainInteger(ref reader) && Utf8Parser.TryParse(reader.ValueSpan, out long parsed, out _)) return parsed;
         return checked((long)ReadIntegral(ref reader, long.MinValue, long.MaxValue));
     }
 
     public static ulong ReadUInt64(ref Utf8JsonReader reader)
     {
         if (reader.TokenType == JsonTokenType.Number && reader.TryGetUInt64(out var value)) return value;
+        if (IsPlainInteger(ref reader) && Utf8Parser.TryParse(reader.ValueSpan, out ulong parsed, out _)) return parsed;
         return checked((ulong)ReadIntegral(ref reader, ulong.MinValue, ulong.MaxValue));
     }
 
@@ -221,6 +223,21 @@ public static class ConnectJson
     }
 
     // Integers may be spelled 1.0 or 1e3, as numbers or as strings, provided they are whole.
+    // 64-bit integers are JSON strings. The canonical form parses without building a string;
+    // everything else (exponents, escapes, out of range) takes the general path.
+    private static bool IsPlainInteger(ref Utf8JsonReader reader)
+    {
+        if (reader.TokenType != JsonTokenType.String || reader.ValueIsEscaped || reader.HasValueSequence) return false;
+        var text = reader.ValueSpan;
+        var start = text.Length > 0 && text[0] == '-' ? 1 : 0;
+        if (start == text.Length || text[start] == '0') return false;
+        for (var i = start; i < text.Length; i++)
+        {
+            if (!IsDigit((char)text[i])) return false;
+        }
+        return true;
+    }
+
     private static decimal ReadIntegral(ref Utf8JsonReader reader, decimal min, decimal max)
     {
         decimal value;

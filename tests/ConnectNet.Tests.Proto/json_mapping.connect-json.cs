@@ -430,9 +430,9 @@ if (this.RInt32.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F1);
 writer.WriteStartArray();
-foreach (var item in this.RInt32)
+for (var i = 0; i < this.RInt32.Count; i++)
 {
-writer.WriteNumberValue(item);
+writer.WriteNumberValue(this.RInt32[i]);
 }
 writer.WriteEndArray();
 }
@@ -440,9 +440,9 @@ if (this.RInt64.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F2);
 writer.WriteStartArray();
-foreach (var item in this.RInt64)
+for (var i = 0; i < this.RInt64.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteInt64(writer, item);
+global::ConnectNet.ConnectJson.WriteInt64(writer, this.RInt64[i]);
 }
 writer.WriteEndArray();
 }
@@ -450,9 +450,9 @@ if (this.RDouble.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F3);
 writer.WriteStartArray();
-foreach (var item in this.RDouble)
+for (var i = 0; i < this.RDouble.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteDouble(writer, item);
+global::ConnectNet.ConnectJson.WriteDouble(writer, this.RDouble[i]);
 }
 writer.WriteEndArray();
 }
@@ -460,9 +460,9 @@ if (this.RString.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F4);
 writer.WriteStartArray();
-foreach (var item in this.RString)
+for (var i = 0; i < this.RString.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteString(writer, item);
+global::ConnectNet.ConnectJson.WriteString(writer, this.RString[i]);
 }
 writer.WriteEndArray();
 }
@@ -470,9 +470,9 @@ if (this.RBytes.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F5);
 writer.WriteStartArray();
-foreach (var item in this.RBytes)
+for (var i = 0; i < this.RBytes.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteBytes(writer, item);
+global::ConnectNet.ConnectJson.WriteBytes(writer, this.RBytes[i]);
 }
 writer.WriteEndArray();
 }
@@ -480,9 +480,9 @@ if (this.REnum.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F6);
 writer.WriteStartArray();
-foreach (var item in this.REnum)
+for (var i = 0; i < this.REnum.Count; i++)
 {
-__ConnectJson.WriteEnum0(writer, item);
+__ConnectJson.WriteEnum0(writer, this.REnum[i]);
 }
 writer.WriteEndArray();
 }
@@ -490,9 +490,9 @@ if (this.RNested.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F7);
 writer.WriteStartArray();
-foreach (var item in this.RNested)
+for (var i = 0; i < this.RNested.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.RNested[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -1328,9 +1328,9 @@ if (this.RTimestamp.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F16);
 writer.WriteStartArray();
-foreach (var item in this.RTimestamp)
+for (var i = 0; i < this.RTimestamp.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.RTimestamp[i], fallback);
 }
 writer.WriteEndArray();
 }

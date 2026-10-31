@@ -12,9 +12,9 @@ if (this.ResponseHeaders.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F1);
 writer.WriteStartArray();
-foreach (var item in this.ResponseHeaders)
+for (var i = 0; i < this.ResponseHeaders.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.ResponseHeaders[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -32,9 +32,9 @@ if (this.ResponseTrailers.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F4);
 writer.WriteStartArray();
-foreach (var item in this.ResponseTrailers)
+for (var i = 0; i < this.ResponseTrailers.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.ResponseTrailers[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -164,9 +164,9 @@ if (this.ResponseHeaders.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F1);
 writer.WriteStartArray();
-foreach (var item in this.ResponseHeaders)
+for (var i = 0; i < this.ResponseHeaders.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.ResponseHeaders[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -174,9 +174,9 @@ if (this.ResponseData.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F2);
 writer.WriteStartArray();
-foreach (var item in this.ResponseData)
+for (var i = 0; i < this.ResponseData.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteBytes(writer, item);
+global::ConnectNet.ConnectJson.WriteBytes(writer, this.ResponseData[i]);
 }
 writer.WriteEndArray();
 }
@@ -194,9 +194,9 @@ if (this.ResponseTrailers.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F5);
 writer.WriteStartArray();
-foreach (var item in this.ResponseTrailers)
+for (var i = 0; i < this.ResponseTrailers.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.ResponseTrailers[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -928,9 +928,9 @@ if (this.RequestHeaders.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F1);
 writer.WriteStartArray();
-foreach (var item in this.RequestHeaders)
+for (var i = 0; i < this.RequestHeaders.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.RequestHeaders[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -943,9 +943,9 @@ if (this.Requests.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F3);
 writer.WriteStartArray();
-foreach (var item in this.Requests)
+for (var i = 0; i < this.Requests.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.Requests[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -1043,9 +1043,9 @@ if (this.QueryParams.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F1);
 writer.WriteStartArray();
-foreach (var item in this.QueryParams)
+for (var i = 0; i < this.QueryParams.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.QueryParams[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -1105,9 +1105,9 @@ if (this.Details.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F3);
 writer.WriteStartArray();
-foreach (var item in this.Details)
+for (var i = 0; i < this.Details.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.Details[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -1256,9 +1256,9 @@ if (this.Value.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F2);
 writer.WriteStartArray();
-foreach (var item in this.Value)
+for (var i = 0; i < this.Value.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteString(writer, item);
+global::ConnectNet.ConnectJson.WriteString(writer, this.Value[i]);
 }
 writer.WriteEndArray();
 }
@@ -1327,9 +1327,9 @@ if (this.Headers.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F3);
 writer.WriteStartArray();
-foreach (var item in this.Headers)
+for (var i = 0; i < this.Headers.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.Headers[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -1337,9 +1337,9 @@ if (this.RawQueryParams.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F4);
 writer.WriteStartArray();
-foreach (var item in this.RawQueryParams)
+for (var i = 0; i < this.RawQueryParams.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.RawQueryParams[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -1347,9 +1347,9 @@ if (this.EncodedQueryParams.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F5);
 writer.WriteStartArray();
-foreach (var item in this.EncodedQueryParams)
+for (var i = 0; i < this.EncodedQueryParams.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.EncodedQueryParams[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -1706,9 +1706,9 @@ if (this.Items.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F1);
 writer.WriteStartArray();
-foreach (var item in this.Items)
+for (var i = 0; i < this.Items.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.Items[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -1838,9 +1838,9 @@ if (this.Headers.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F2);
 writer.WriteStartArray();
-foreach (var item in this.Headers)
+for (var i = 0; i < this.Headers.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.Headers[i], fallback);
 }
 writer.WriteEndArray();
 }
@@ -1858,9 +1858,9 @@ if (this.Trailers.Count != 0)
 {
 writer.WritePropertyName(__ConnectJson.F5);
 writer.WriteStartArray();
-foreach (var item in this.Trailers)
+for (var i = 0; i < this.Trailers.Count; i++)
 {
-global::ConnectNet.ConnectJson.WriteMessage(writer, item, fallback);
+global::ConnectNet.ConnectJson.WriteMessage(writer, this.Trailers[i], fallback);
 }
 writer.WriteEndArray();
 }
