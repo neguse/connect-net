@@ -2,29 +2,68 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
 
 	"google.golang.org/protobuf/compiler/protogen"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/pluginpb"
 )
 
 func main() {
-	protogen.Options{}.Run(func(plugin *protogen.Plugin) error {
-		plugin.SupportedFeatures = uint64(pluginpb.CodeGeneratorResponse_FEATURE_PROTO3_OPTIONAL)
-		for _, file := range plugin.Files {
-			if file.Generate {
-				if err := generateFile(plugin, file); err != nil {
-					return err
-				}
-				generateJSON(plugin, file)
-			}
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fatal(err)
+	}
+	req := &pluginpb.CodeGeneratorRequest{}
+	if err := proto.Unmarshal(input, req); err != nil {
+		fatal(err)
+	}
+	output, err := proto.Marshal(generate(req))
+	if err != nil {
+		fatal(err)
+	}
+	if _, err := os.Stdout.Write(output); err != nil {
+		fatal(err)
+	}
+}
+
+func fatal(err error) {
+	fmt.Fprintln(os.Stderr, "protoc-gen-connect-csharp:", err)
+	os.Exit(1)
+}
+
+func generate(req *pluginpb.CodeGeneratorRequest) *pluginpb.CodeGeneratorResponse {
+	// protogen insists on a Go import path for every file, which C# output never uses.
+	for _, file := range req.ProtoFile {
+		if file.Options == nil {
+			file.Options = &descriptorpb.FileOptions{}
 		}
-		return nil
-	})
+		if file.Options.GoPackage == nil {
+			file.Options.GoPackage = proto.String("./unused")
+		}
+	}
+
+	plugin, err := protogen.Options{}.New(req)
+	if err != nil {
+		return &pluginpb.CodeGeneratorResponse{Error: proto.String(err.Error())}
+	}
+	plugin.SupportedFeatures = uint64(pluginpb.CodeGeneratorResponse_FEATURE_PROTO3_OPTIONAL)
+	for _, file := range plugin.Files {
+		if file.Generate {
+			if err := generateFile(plugin, file); err != nil {
+				plugin.Error(err)
+				break
+			}
+			generateJSON(plugin, file)
+		}
+	}
+	return plugin.Response()
 }
 
 func generateFile(plugin *protogen.Plugin, file *protogen.File) error {

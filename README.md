@@ -77,7 +77,7 @@ app.Run();
 ```csharp
 using ConnectNet.Client;
 
-var channel = new ConnectChannel(new HttpClient(), "https://localhost:5000");
+var channel = ConnectChannel.ForAddress("https://localhost:5000");
 var client = new GreeterServiceClient(channel);
 
 var response = await client.SayHelloAsync(new HelloRequest { Name = "World" });
@@ -89,7 +89,7 @@ Console.WriteLine(response.Message); // Hello World!
 ```csharp
 // HTTP/1.1 (default): works with Unity's built-in HTTP stack
 // Supports: Unary, Server Streaming
-var channel = new ConnectChannel(new HttpClient(), "https://api.example.com");
+var channel = ConnectChannel.ForAddress("https://api.example.com");
 var client = new GreeterServiceClient(channel);
 var response = await client.SayHelloAsync(new HelloRequest { Name = "Unity" });
 ```
@@ -103,7 +103,7 @@ For Client Streaming and Bidirectional Streaming, HTTP/2 is required. Use [YetAn
 using Cysharp.Net.Http;
 
 var handler = new YetAnotherHttpHandler { Http2Only = true };
-var channel = new ConnectChannel(new HttpClient(handler), "https://api.example.com");
+var channel = ConnectChannel.ForAddress("https://api.example.com", new ConnectChannelOptions { HttpHandler = handler });
 var client = new GreeterServiceClient(channel);
 ```
 
@@ -114,7 +114,7 @@ YAHA requires building its native Rust library for your target platform. See the
 Unity WebGL builds cannot use `SocketsHttpHandler`. Use the bundled `UnityWebRequestHandler`, which is backed by `UnityWebRequest` and supports Unary and Server Streaming over HTTP/1.1:
 
 ```csharp
-var channel = new ConnectChannel(new HttpClient(new UnityWebRequestHandler()), "https://api.example.com");
+var channel = ConnectChannel.ForAddress("https://api.example.com", new ConnectChannelOptions { HttpHandler = new UnityWebRequestHandler() });
 var client = new GreeterServiceClient(channel);
 ```
 
@@ -229,7 +229,7 @@ var options = new ConnectChannelOptions
     RequestCompressor = new GzipCompressor(),  // compress outgoing requests
     AcceptCompression = true,                  // accept compressed responses (default: true)
 };
-var channel = new ConnectChannel(new HttpClient(), "https://localhost:5000", channelOptions: options);
+var channel = ConnectChannel.ForAddress("https://localhost:5000", options);
 ```
 
 On the server side, gzip compression is registered automatically by `AddConnectServices()`.
@@ -255,7 +255,7 @@ var options = new ConnectChannelOptions
 {
     Interceptors = { new AuthInterceptor() }
 };
-var channel = new ConnectChannel(new HttpClient(), "https://localhost:5000", channelOptions: options);
+var channel = ConnectChannel.ForAddress("https://localhost:5000", options);
 ```
 
 #### Server Interceptor
@@ -297,10 +297,9 @@ var response = await client.SayHelloAsync(
 Use JSON instead of Protobuf for the wire format.
 
 ```csharp
-var channel = new ConnectChannel(
-    new HttpClient(),
+var channel = ConnectChannel.ForAddress(
     "https://localhost:5000",
-    codec: new JsonCodec());
+    new ConnectChannelOptions { Codec = new JsonCodec() });
 ```
 
 The server supports both `application/proto` and `application/json` content types automatically.
