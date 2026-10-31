@@ -72,7 +72,7 @@ internal static class ConnectBidiStreamHandler
 
         // Find a response compressor that the client accepts (q=0 entries excluded)
         request.Headers.TryGetValue("Connect-Accept-Encoding", out var acceptEncodingValues);
-        var responseCompressor = ConnectServerProtocol.NegotiateCompression(acceptEncodingValues, compressorRegistry);
+        var responseCompressor = ConnectServerProtocol.NegotiateResponseCompression(acceptEncodingValues, compressorRegistry, serverOptions);
 
         // Parse Connect-Timeout-Ms header (clamped to a safe upper bound)
         var ct = httpContext.RequestAborted;

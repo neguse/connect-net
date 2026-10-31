@@ -143,28 +143,39 @@ internal static class ConnectServerProtocol
     /// Writes one message as a single envelope and flushes it to the client. Protobuf knows its
     /// size up front, so a message that will not be compressed skips the intermediate buffer.
     /// </summary>
-    internal static async Task WriteResponseEnvelopeAsync(PipeWriter writer, ICodec codec, IMessage message, ICompressor? compressor, int minBytes, CancellationToken ct)
+    internal static Task WriteResponseEnvelopeAsync(PipeWriter writer, ICodec codec, IMessage message, ICompressor? compressor, int minBytes, CancellationToken ct)
     {
-        if (codec is ProtobufCodec && message.CalculateSize() is var size && (compressor == null || size < minBytes))
+        WriteResponseEnvelope(writer, codec, message, compressor, minBytes);
+        return Envelope.FlushAsync(writer, ct);
+    }
+
+    // Synchronous so that a pooled buffer goes back before the flush can move this call to
+    // another thread, where returning it would miss ArrayPool's per-thread cache.
+    private static void WriteResponseEnvelope(PipeWriter writer, ICodec codec, IMessage message, ICompressor? compressor, int minBytes)
+    {
+        var size = message.CalculateSize();
+        if (codec is ProtobufCodec && (compressor == null || size < minBytes))
         {
             Envelope.WriteHeader(writer, 0x00, size);
             codec.Serialize(message, writer);
-            await Envelope.FlushAsync(writer, ct);
             return;
         }
 
-        using var buffer = new ArrayPoolBufferWriter();
+        using var buffer = new ArrayPoolBufferWriter(size * 2 + 16);
         codec.Serialize(message, buffer);
         using var compressed = compressor == null ? null : TryCompress(compressor, buffer.WrittenMemory, minBytes);
         if (compressed != null)
         {
-            await Envelope.WriteAsync(writer, Envelope.FlagCompressed, compressed.WrittenMemory, ct);
+            Envelope.Write(writer, Envelope.FlagCompressed, compressed.WrittenSpan);
         }
         else
         {
-            await Envelope.WriteAsync(writer, 0x00, buffer.WrittenMemory, ct);
+            Envelope.Write(writer, 0x00, buffer.WrittenSpan);
         }
     }
+
+    internal static ICompressor? NegotiateResponseCompression(StringValues acceptEncoding, ConnectCompressorRegistry? registry, ConnectServerOptions? options)
+        => CompressMinBytes(options) == int.MaxValue ? null : NegotiateCompression(acceptEncoding, registry);
 
     internal static ICompressor? NegotiateCompression(StringValues acceptEncoding, ConnectCompressorRegistry? registry)
     {

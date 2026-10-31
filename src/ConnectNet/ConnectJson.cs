@@ -165,10 +165,25 @@ public static class ConnectJson
 
     public static ByteString ReadBytes(ref Utf8JsonReader reader)
     {
-        // The decoded array is not shared with anything else, so it can be wrapped without a copy.
-        if (reader.TokenType == JsonTokenType.String && reader.TryGetBytesFromBase64(out var decoded))
-            return UnsafeByteOperations.UnsafeWrap(decoded);
+        if (reader.TokenType == JsonTokenType.String)
+        {
+            // The decoded array is not shared with anything else, so it can be wrapped without a copy.
+            // TryGetBytesFromBase64 decodes through a temporary buffer; sizing the array exactly avoids that.
+            if (TryDecodeExact(ref reader, out var exact)) return UnsafeByteOperations.UnsafeWrap(exact);
+            if (reader.TryGetBytesFromBase64(out var decoded)) return UnsafeByteOperations.UnsafeWrap(decoded);
+        }
         return ByteString.FromBase64(ReadString(ref reader));
+    }
+
+    private static bool TryDecodeExact(ref Utf8JsonReader reader, out byte[] decoded)
+    {
+        decoded = Array.Empty<byte>();
+        if (reader.ValueIsEscaped || reader.HasValueSequence) return false;
+        var utf8 = reader.ValueSpan;
+        if (utf8.Length == 0 || utf8.Length % 4 != 0) return false;
+        var padding = utf8[utf8.Length - 1] != '=' ? 0 : utf8[utf8.Length - 2] != '=' ? 1 : 2;
+        decoded = new byte[utf8.Length / 4 * 3 - padding];
+        return Base64.DecodeFromUtf8(utf8, decoded, out _, out var written) == OperationStatus.Done && written == decoded.Length;
     }
 
     public static int ReadInt32(ref Utf8JsonReader reader)
