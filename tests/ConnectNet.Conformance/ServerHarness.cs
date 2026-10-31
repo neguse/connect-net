@@ -74,6 +74,8 @@ internal static class ServerHarness
             Connectrpc.Conformance.V1.ConfigReflection.Descriptor);
         builder.Services.AddConnectServices(options =>
         {
+            // Compression is opt-in; the suite should exercise it on every response.
+            options.CompressMinBytes = 0;
             if (request.MessageReceiveLimit > 0)
             {
                 options.MessageReceiveLimit = request.MessageReceiveLimit;

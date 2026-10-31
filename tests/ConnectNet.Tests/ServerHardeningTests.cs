@@ -280,7 +280,7 @@ public class ServerHardeningTests
     [Fact]
     public async Task Unary_AcceptEncodingQZero_NotCompressed()
     {
-        using var server = CreateServer();
+        using var server = CreateServer(o => o.CompressMinBytes = 0);
         using var client = server.CreateClient();
 
         using var httpRequest = BuildUnaryRequest("/hardening.Test/Echo", new HelloRequest { Name = "q0" }.ToByteArray());
@@ -296,10 +296,10 @@ public class ServerHardeningTests
     [Fact]
     public async Task Unary_AcceptEncodingQPositive_Compressed()
     {
-        using var server = CreateServer();
+        using var server = CreateServer(o => o.CompressMinBytes = 0);
         using var client = server.CreateClient();
 
-        using var httpRequest = BuildUnaryRequest("/hardening.Test/Echo", new HelloRequest { Name = new string('a', ConnectServerOptions.DefaultCompressMinBytes) }.ToByteArray());
+        using var httpRequest = BuildUnaryRequest("/hardening.Test/Echo", new HelloRequest { Name = new string('a', 1024) }.ToByteArray());
         httpRequest.Headers.Add("Accept-Encoding", "gzip;q=0.5");
         var response = await client.SendAsync(httpRequest);
 
@@ -310,7 +310,7 @@ public class ServerHardeningTests
     [Fact]
     public async Task ServerStream_ConnectAcceptEncodingQZero_NotCompressed()
     {
-        using var server = CreateServer();
+        using var server = CreateServer(o => o.CompressMinBytes = 0);
         using var client = server.CreateClient();
 
         var body = await BuildEnvelopeBody(new HelloRequest { Name = "sq0" }.ToByteArray());
