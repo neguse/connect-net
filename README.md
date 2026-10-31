@@ -9,7 +9,7 @@ Build type-safe RPC clients and servers that work over HTTP/1.1 and HTTP/2.
 - **Unity compatible** — Client library targets .NET Standard 2.1
 - **Full RPC support** — Unary, Server Streaming, Client Streaming, Bidirectional Streaming
 - **Multiple codecs** — Protobuf and JSON
-- **gzip/deflate compression** — Automatic request/response compression with negotiation
+- **gzip/deflate compression** — Request and opt-in response compression with negotiation
 - **Interceptors** — Client-side and server-side middleware for unary RPCs
 - **GET requests** — Cache-friendly idempotent RPCs via query parameters
 - **Health checks** — gRPC-compatible health endpoint (`grpc.health.v1.Health/Check`)
@@ -221,7 +221,7 @@ await readTask;
 
 ### Compression
 
-Enable gzip compression for requests. Response compression is negotiated automatically via `Accept-Encoding`.
+Enable gzip compression for requests:
 
 ```csharp
 var options = new ConnectChannelOptions
@@ -232,7 +232,11 @@ var options = new ConnectChannelOptions
 var channel = new ConnectChannel(new HttpClient(), "https://localhost:5000", channelOptions: options);
 ```
 
-On the server side, gzip compression is registered automatically by `AddConnectServices()`.
+On the server side, `AddConnectServices()` always accepts compressed requests, but responses are not compressed by default because compression spends CPU whether or not the data shrinks. Set `CompressMinBytes` to compress responses of at least that size for clients that accept it:
+
+```csharp
+builder.Services.AddConnectServices(o => o.CompressMinBytes = 1024);
+```
 
 ### Interceptors
 

@@ -40,7 +40,7 @@ public class KestrelWriteTests : IAsyncLifetime
             o.Listen(IPAddress.Loopback, 0, l => l.Protocols = HttpProtocols.Http1);
             o.Listen(IPAddress.Loopback, 0, l => l.Protocols = HttpProtocols.Http2);
         });
-        builder.Services.AddConnectServices();
+        builder.Services.AddConnectServices(o => o.CompressMinBytes = 1024);
         builder.Services.AddSingleton<WriteGreeter>();
         _app = builder.Build();
         _app.MapConnectService<WriteGreeter>(GreeterServiceDefinition.Instance);
