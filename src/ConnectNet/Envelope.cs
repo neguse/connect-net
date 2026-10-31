@@ -130,7 +130,11 @@ public static class Envelope
     public static Task<EnvelopeFrame?> ReadFrameAsync(PipeReader reader, CancellationToken ct = default)
         => ReadFrameAsync(reader, DefaultMaxMessageBytes, ct);
 
-    public static async Task<EnvelopeFrame?> ReadFrameAsync(PipeReader reader, int maxLength, CancellationToken ct = default)
+    public static Task<EnvelopeFrame?> ReadFrameAsync(PipeReader reader, int maxLength, CancellationToken ct = default)
+        => ReadFrameValueAsync(reader, maxLength, ct).AsTask();
+
+    // A ValueTask keeps a frame already sitting in the pipe from allocating a Task per message.
+    internal static async ValueTask<EnvelopeFrame?> ReadFrameValueAsync(PipeReader reader, int maxLength, CancellationToken ct)
     {
         if (reader == null) throw new ArgumentNullException(nameof(reader));
         if (maxLength <= 0)
@@ -218,20 +222,29 @@ public static class Envelope
     public static async Task WriteAsync(PipeWriter writer, byte flags, ReadOnlyMemory<byte> data, CancellationToken ct = default)
     {
         if (writer == null) throw new ArgumentNullException(nameof(writer));
-        var header = writer.GetSpan(5);
-        header[0] = flags;
-        var length = data.Length;
-        header[1] = (byte)(length >> 24);
-        header[2] = (byte)(length >> 16);
-        header[3] = (byte)(length >> 8);
-        header[4] = (byte)length;
-        writer.Advance(5);
+        WriteHeader(writer, flags, data.Length);
         if (data.Length > 0)
         {
             var dest = writer.GetSpan(data.Length);
             data.Span.CopyTo(dest);
             writer.Advance(data.Length);
         }
+        await FlushAsync(writer, ct).ConfigureAwait(false);
+    }
+
+    internal static void WriteHeader(IBufferWriter<byte> writer, byte flags, int length)
+    {
+        var header = writer.GetSpan(5);
+        header[0] = flags;
+        header[1] = (byte)(length >> 24);
+        header[2] = (byte)(length >> 16);
+        header[3] = (byte)(length >> 8);
+        header[4] = (byte)length;
+        writer.Advance(5);
+    }
+
+    internal static async Task FlushAsync(PipeWriter writer, CancellationToken ct)
+    {
         var flushResult = await writer.FlushAsync(ct).ConfigureAwait(false);
         if (flushResult.IsCanceled) throw new OperationCanceledException(ct);
         // The reader completed (e.g. the peer disconnected): nothing will consume further

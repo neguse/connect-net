@@ -3,6 +3,10 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
+using System.IO.Pipelines;
+using System.Threading.Tasks;
+using ConnectNet.Pooling;
+using Google.Protobuf;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
 
@@ -92,6 +96,76 @@ internal static class ConnectServerProtocol
     /// Selects a response compressor from an Accept-Encoding style header, honoring
     /// q-values: entries with q=0 are explicitly unacceptable and must not be chosen.
     /// </summary>
+    private static readonly Func<object, IDictionary<string, string>> CopyRequestHeaders = source =>
+    {
+        var headers = (IHeaderDictionary)source;
+        var copy = new Dictionary<string, string>(headers.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var header in headers)
+        {
+            copy[header.Key] = header.Value.ToString();
+        }
+        return copy;
+    };
+
+    internal static ConnectContext CreateContext(HttpRequest request, CancellationToken ct)
+        => new(request.Headers, CopyRequestHeaders, ct);
+
+    internal static int CompressMinBytes(ConnectServerOptions? options)
+        => options?.CompressMinBytes ?? ConnectServerOptions.DefaultCompressMinBytes;
+
+    /// <summary>
+    /// Returns the compressed form of <paramref name="message"/>, or null when it should go out
+    /// plain: below <paramref name="minBytes"/>, or when compression did not shrink it. The
+    /// protocol allows either per message for envelopes and per response for unary bodies.
+    /// </summary>
+    internal static ArrayPoolBufferWriter? TryCompress(ICompressor compressor, ReadOnlyMemory<byte> message, int minBytes)
+    {
+        if (message.Length < minBytes)
+            return null;
+
+        var compressed = new ArrayPoolBufferWriter();
+        try
+        {
+            compressor.Compress(message, compressed);
+            if (compressed.WrittenMemory.Length < message.Length)
+                return compressed;
+        }
+        catch
+        {
+            compressed.Dispose();
+            throw;
+        }
+        compressed.Dispose();
+        return null;
+    }
+
+    /// <summary>
+    /// Writes one message as a single envelope and flushes it to the client. Protobuf knows its
+    /// size up front, so a message that will not be compressed skips the intermediate buffer.
+    /// </summary>
+    internal static async Task WriteResponseEnvelopeAsync(PipeWriter writer, ICodec codec, IMessage message, ICompressor? compressor, int minBytes, CancellationToken ct)
+    {
+        if (codec is ProtobufCodec && message.CalculateSize() is var size && (compressor == null || size < minBytes))
+        {
+            Envelope.WriteHeader(writer, 0x00, size);
+            codec.Serialize(message, writer);
+            await Envelope.FlushAsync(writer, ct);
+            return;
+        }
+
+        using var buffer = new ArrayPoolBufferWriter();
+        codec.Serialize(message, buffer);
+        using var compressed = compressor == null ? null : TryCompress(compressor, buffer.WrittenMemory, minBytes);
+        if (compressed != null)
+        {
+            await Envelope.WriteAsync(writer, Envelope.FlagCompressed, compressed.WrittenMemory, ct);
+        }
+        else
+        {
+            await Envelope.WriteAsync(writer, 0x00, buffer.WrittenMemory, ct);
+        }
+    }
+
     internal static ICompressor? NegotiateCompression(StringValues acceptEncoding, ConnectCompressorRegistry? registry)
     {
         if (registry == null || acceptEncoding.Count == 0)

@@ -86,12 +86,7 @@ internal static class ConnectClientStreamHandler
                 response.Headers["Connect-Content-Encoding"] = responseCompressor.Name;
             }
 
-            var requestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var header in request.Headers)
-            {
-                requestHeaders[header.Key] = header.Value.ToString();
-            }
-            var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
+            var context = ConnectServerProtocol.CreateContext(request, ct);
             ConnectException? streamError = null;
 
             try
@@ -105,23 +100,14 @@ internal static class ConnectClientStreamHandler
                 // Write response headers from context before body
                 if (!response.HasStarted)
                 {
-                    foreach (var header in context.ResponseHeaders)
+                    foreach (var header in context.ResponseHeadersOrEmpty)
                     {
                         response.Headers[header.Key] = header.Value;
                     }
                 }
 
                 // Write single response envelope
-                var responseBytes = codec.SerializeToArray(result);
-                if (responseCompressor != null)
-                {
-                    responseBytes = responseCompressor.CompressToArray(responseBytes);
-                    await Envelope.WriteAsync(response.Body, Envelope.FlagCompressed, responseBytes, ct);
-                }
-                else
-                {
-                    await Envelope.WriteAsync(response.Body, 0x00, responseBytes, ct);
-                }
+                await ConnectServerProtocol.WriteResponseEnvelopeAsync(response.BodyWriter, codec, result, responseCompressor, ConnectServerProtocol.CompressMinBytes(serverOptions), ct);
             }
             catch (ConnectException ex)
             {
@@ -150,16 +136,14 @@ internal static class ConnectClientStreamHandler
             // Write response headers on error path too
             if (!response.HasStarted)
             {
-                foreach (var header in context.ResponseHeaders)
+                foreach (var header in context.ResponseHeadersOrEmpty)
                 {
                     response.Headers[header.Key] = header.Value;
                 }
             }
 
             // Write EndStream envelope
-            var endStreamJson = ConnectServerStreamHandler.BuildEndStreamJson(streamError, context);
-            await Envelope.WriteAsync(response.Body, Envelope.FlagEndStream, Encoding.UTF8.GetBytes(endStreamJson), httpContext.RequestAborted);
-            await response.Body.FlushAsync(httpContext.RequestAborted);
+            await ConnectServerStreamHandler.WriteEndStreamAsync(response, streamError, context, httpContext.RequestAborted);
         }
         catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
         {

@@ -1,4 +1,8 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using ConnectNet;
 using ConnectNet.Client;
@@ -16,11 +20,11 @@ namespace ConnectNet.Tests;
 
 public class CompressionTests
 {
-    private (TestServer server, ConnectChannel channel) CreateSetup(ConnectChannelOptions? channelOptions = null)
+    private (TestServer server, ConnectChannel channel) CreateSetup(ConnectChannelOptions? channelOptions = null, Action<ConnectServerOptions>? configure = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddConnectServices();
+        builder.Services.AddConnectServices(configure);
         builder.Services.AddSingleton<CompGreeterService>();
         var app = builder.Build();
         app.MapConnectService<CompGreeterService>(CompGreeterServiceDefinition.Instance);
@@ -49,6 +53,150 @@ public class CompressionTests
                 "/example.GreeterService/SayHello",
                 new HelloRequest { Name = "Compressed" });
             Assert.Equal("Hello Compressed", response.Message);
+        }
+    }
+
+    private static HttpRequestMessage UnaryRequest(string name, string acceptEncoding = "gzip")
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/example.GreeterService/SayHello")
+        {
+            Content = new ByteArrayContent(new HelloRequest { Name = name }.ToByteArray()),
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/proto");
+        request.Headers.TryAddWithoutValidation("Accept-Encoding", acceptEncoding);
+        return request;
+    }
+
+    private static async Task<byte[]> StreamFlags(TestServer server, string name)
+    {
+        var body = new MemoryStream();
+        await Envelope.WriteAsync(body, 0, new HelloRequest { Name = name }.ToByteArray());
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/example.GreeterService/SayHelloStream")
+        {
+            Content = new ByteArrayContent(body.ToArray()),
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/connect+proto");
+        request.Headers.TryAddWithoutValidation("Connect-Accept-Encoding", "gzip");
+        using var response = await server.CreateClient().SendAsync(request);
+        using var stream = await response.Content.ReadAsStreamAsync();
+
+        var flags = new List<byte>();
+        while (await Envelope.ReadFrameAsync(stream) is { } frame)
+        {
+            using (frame) flags.Add(frame.Flags);
+        }
+        return flags.ToArray();
+    }
+
+    private static string Compressible(int responseSize)
+    {
+        // "Hello " plus the name, framed as one length-delimited string field
+        var name = new string('a', responseSize - 3 - "Hello ".Length);
+        Assert.Equal(responseSize, new HelloResponse { Message = "Hello " + name }.CalculateSize());
+        return name;
+    }
+
+    [Fact]
+    public async Task Unary_BelowDefaultMinBytes_NotCompressed()
+    {
+        var (server, _) = CreateSetup();
+        using (server)
+        {
+            using var request = UnaryRequest(Compressible(ConnectServerOptions.DefaultCompressMinBytes - 1));
+            using var response = await server.CreateClient().SendAsync(request);
+            Assert.Empty(response.Content.Headers.ContentEncoding);
+        }
+    }
+
+    [Fact]
+    public async Task Unary_AtDefaultMinBytes_Compressed()
+    {
+        var (server, _) = CreateSetup();
+        using (server)
+        {
+            using var request = UnaryRequest(Compressible(ConnectServerOptions.DefaultCompressMinBytes));
+            using var response = await server.CreateClient().SendAsync(request);
+            Assert.Contains("gzip", response.Content.Headers.ContentEncoding);
+        }
+    }
+
+    [Fact]
+    public async Task Unary_ConfiguredMinBytes_IsHonored()
+    {
+        var (server, _) = CreateSetup(configure: o => o.CompressMinBytes = 4096);
+        using (server)
+        {
+            using var below = UnaryRequest(Compressible(4095));
+            using var belowResponse = await server.CreateClient().SendAsync(below);
+            Assert.Empty(belowResponse.Content.Headers.ContentEncoding);
+
+            using var at = UnaryRequest(Compressible(4096));
+            using var atResponse = await server.CreateClient().SendAsync(at);
+            Assert.Contains("gzip", atResponse.Content.Headers.ContentEncoding);
+        }
+    }
+
+    [Fact]
+    public async Task Unary_CompressionThatGrowsTheBody_SentPlain()
+    {
+        var (server, _) = CreateSetup(configure: o => o.CompressMinBytes = 0);
+        using (server)
+        {
+            using var request = UnaryRequest("x");
+            using var response = await server.CreateClient().SendAsync(request);
+            Assert.Empty(response.Content.Headers.ContentEncoding);
+            var reply = HelloResponse.Parser.ParseFrom(await response.Content.ReadAsByteArrayAsync());
+            Assert.Equal("Hello x", reply.Message);
+        }
+    }
+
+    [Fact]
+    public async Task ServerStream_BelowMinBytes_FlagClear()
+    {
+        var (server, _) = CreateSetup();
+        using (server)
+        {
+            var flags = await StreamFlags(server, "small");
+            Assert.Equal(new byte[] { 0, 0, 0, Envelope.FlagEndStream }, flags);
+        }
+    }
+
+    [Fact]
+    public async Task ServerStream_AtMinBytes_FlagSet()
+    {
+        var (server, _) = CreateSetup(configure: o => o.CompressMinBytes = 64);
+        using (server)
+        {
+            var flags = await StreamFlags(server, new string('a', 256));
+            Assert.Equal(new byte[] { Envelope.FlagCompressed, Envelope.FlagCompressed, Envelope.FlagCompressed, Envelope.FlagEndStream }, flags);
+        }
+    }
+
+    [Fact]
+    public async Task ServerStream_CompressionThatGrowsTheMessage_FlagClear()
+    {
+        var (server, _) = CreateSetup(configure: o => o.CompressMinBytes = 0);
+        using (server)
+        {
+            var flags = await StreamFlags(server, "x");
+            Assert.Equal(new byte[] { 0, 0, 0, Envelope.FlagEndStream }, flags);
+        }
+    }
+
+    [Fact]
+    public async Task ServerStream_LargeMessage_ClientDecompresses()
+    {
+        var (server, channel) = CreateSetup();
+        using (server)
+        {
+            var name = new string('a', ConnectServerOptions.DefaultCompressMinBytes);
+            var messages = new List<HelloResponse>();
+            await foreach (var response in channel.ServerStreamAsync<HelloRequest, HelloResponse>(
+                "/example.GreeterService/SayHelloStream", new HelloRequest { Name = name }))
+            {
+                messages.Add(response);
+            }
+            Assert.Equal("Hello " + name + " #3", messages[2].Message);
         }
     }
 

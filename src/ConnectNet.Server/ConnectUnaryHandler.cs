@@ -55,12 +55,7 @@ internal static class ConnectUnaryHandler
         var timeoutCts = ConnectServerProtocol.StartTimeout(httpContext, serverOptions, ref ct);
 
         // Create context with request headers
-        var requestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var header in request.Headers)
-        {
-            requestHeaders[header.Key] = header.Value.ToString();
-        }
-        var context = new ConnectContext(requestHeaders: requestHeaders, cancellationToken: ct);
+        var context = ConnectServerProtocol.CreateContext(request, ct);
 
         ArrayPoolBufferWriter? rawWriter = null;
         ArrayPoolBufferWriter? decompressedWriter = null;
@@ -127,42 +122,18 @@ internal static class ConnectUnaryHandler
             response.ContentType = $"application/{codec.Name}";
 
             // Write response headers
-            foreach (var header in context.ResponseHeaders)
+            foreach (var header in context.ResponseHeadersOrEmpty)
             {
                 response.Headers[header.Key] = header.Value;
             }
 
             // Write Trailer-* headers (Connect unary trailers)
-            foreach (var trailer in context.ResponseTrailers)
+            foreach (var trailer in context.ResponseTrailersOrEmpty)
             {
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
             }
 
-            // Serialize directly into a pooled buffer writer; the response is then either
-            // written as-is or piped through a compressor that also writes into the pool.
-            using var msgWriter = new ArrayPoolBufferWriter();
-            codec.Serialize(responseMessage, msgWriter);
-
-            ICompressor? selectedCompressor = null;
-            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding))
-            {
-                selectedCompressor = ConnectServerProtocol.NegotiateCompression(acceptEncoding, compressorRegistry);
-                if (selectedCompressor != null)
-                {
-                    response.Headers["Content-Encoding"] = selectedCompressor.Name;
-                }
-            }
-
-            if (selectedCompressor != null)
-            {
-                using var compressedWriter = new ArrayPoolBufferWriter();
-                selectedCompressor.Compress(msgWriter.WrittenMemory, compressedWriter);
-                await response.Body.WriteAsync(compressedWriter.WrittenMemory, ct);
-            }
-            else
-            {
-                await response.Body.WriteAsync(msgWriter.WrittenMemory, ct);
-            }
+            await WriteResponseBodyAsync(httpContext, codec, responseMessage, compressorRegistry, serverOptions, ct);
         }
         catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
         {
@@ -192,6 +163,43 @@ internal static class ConnectUnaryHandler
         }
     }
 
+    private static async Task WriteResponseBodyAsync(HttpContext httpContext, ICodec codec, IMessage message, ConnectCompressorRegistry? compressorRegistry, ConnectServerOptions? serverOptions, CancellationToken ct)
+    {
+        var response = httpContext.Response;
+        var minBytes = ConnectServerProtocol.CompressMinBytes(serverOptions);
+        var acceptsCompression = httpContext.Request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding);
+
+        // Protobuf knows its size up front, so a body that will not be compressed skips the
+        // intermediate buffer. Google.Protobuf calls Advance before its first GetSpan, which
+        // Kestrel rejects unless memory has already been leased.
+        if (codec is ProtobufCodec && message.CalculateSize() is var size && (size < minBytes || !acceptsCompression))
+        {
+            response.ContentLength = size;
+            response.BodyWriter.GetSpan(size);
+            codec.Serialize(message, response.BodyWriter);
+            await Envelope.FlushAsync(response.BodyWriter, ct);
+            return;
+        }
+
+        using var buffer = new ArrayPoolBufferWriter();
+        codec.Serialize(message, buffer);
+
+        ICompressor? compressor = null;
+        if (acceptsCompression && buffer.WrittenMemory.Length >= minBytes)
+        {
+            compressor = ConnectServerProtocol.NegotiateCompression(acceptEncoding, compressorRegistry);
+        }
+
+        using var compressed = compressor == null ? null : ConnectServerProtocol.TryCompress(compressor, buffer.WrittenMemory, minBytes);
+        if (compressed != null)
+        {
+            response.Headers["Content-Encoding"] = compressor!.Name;
+        }
+        var body = (compressed ?? buffer).WrittenMemory;
+        response.ContentLength = body.Length;
+        await response.BodyWriter.WriteAsync(body, ct);
+    }
+
     /// <summary>
     /// Writes a unary error response. If the response has already started we cannot
     /// change the status code or emit a JSON body, so the connection is aborted instead
@@ -209,6 +217,7 @@ internal static class ConnectUnaryHandler
         }
         WriteContextHeaders(response, context);
         response.Headers.Remove("Content-Encoding");
+        response.ContentLength = null;
         response.StatusCode = ConnectException.ToHttpStatus(error.Code);
         response.ContentType = "application/json";
         await response.WriteAsync(error.ToJson());
@@ -288,12 +297,7 @@ internal static class ConnectUnaryHandler
         var timeoutCts = ConnectServerProtocol.StartTimeout(httpContext, serverOptions, ref ct);
 
         // Create context with request headers
-        var getRequestHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var header in request.Headers)
-        {
-            getRequestHeaders[header.Key] = header.Value.ToString();
-        }
-        var getContext = new ConnectContext(requestHeaders: getRequestHeaders, cancellationToken: ct);
+        var getContext = ConnectServerProtocol.CreateContext(request, ct);
 
         try
         {
@@ -373,42 +377,18 @@ internal static class ConnectUnaryHandler
             response.ContentType = $"application/{codec.Name}";
 
             // Write response headers
-            foreach (var header in getContext.ResponseHeaders)
+            foreach (var header in getContext.ResponseHeadersOrEmpty)
             {
                 response.Headers[header.Key] = header.Value;
             }
 
             // Write Trailer-* headers (Connect unary trailers)
-            foreach (var trailer in getContext.ResponseTrailers)
+            foreach (var trailer in getContext.ResponseTrailersOrEmpty)
             {
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
             }
 
-            // Serialize directly into a pooled buffer writer; the response is then either
-            // written as-is or piped through a compressor that also writes into the pool.
-            using var msgWriter = new ArrayPoolBufferWriter();
-            codec.Serialize(responseMessage, msgWriter);
-
-            ICompressor? selectedCompressor = null;
-            if (request.Headers.TryGetValue("Accept-Encoding", out var acceptEncoding))
-            {
-                selectedCompressor = ConnectServerProtocol.NegotiateCompression(acceptEncoding, compressorRegistry);
-                if (selectedCompressor != null)
-                {
-                    response.Headers["Content-Encoding"] = selectedCompressor.Name;
-                }
-            }
-
-            if (selectedCompressor != null)
-            {
-                using var compressedWriter = new ArrayPoolBufferWriter();
-                selectedCompressor.Compress(msgWriter.WrittenMemory, compressedWriter);
-                await response.Body.WriteAsync(compressedWriter.WrittenMemory, ct);
-            }
-            else
-            {
-                await response.Body.WriteAsync(msgWriter.WrittenMemory, ct);
-            }
+            await WriteResponseBodyAsync(httpContext, codec, responseMessage, compressorRegistry, serverOptions, ct);
         }
         catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
         {
@@ -439,11 +419,11 @@ internal static class ConnectUnaryHandler
     {
         if (!response.HasStarted)
         {
-            foreach (var header in context.ResponseHeaders)
+            foreach (var header in context.ResponseHeadersOrEmpty)
             {
                 response.Headers[header.Key] = header.Value;
             }
-            foreach (var trailer in context.ResponseTrailers)
+            foreach (var trailer in context.ResponseTrailersOrEmpty)
             {
                 response.Headers[$"Trailer-{trailer.Key}"] = trailer.Value;
             }
