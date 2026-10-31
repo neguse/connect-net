@@ -49,6 +49,9 @@ Two protoc plugins run side by side:
 
 - `protoc-gen-csharp` (official) → message types
 - `protoc-gen-connect-csharp` (this project) → service stubs (`.connect.cs`)
+- `protoc-gen-connect-csharp` (this project) → proto-JSON readers and writers (`.connect-json.cs`), which `JsonCodec` uses instead of `JsonFormatter` / `JsonParser`
+
+Generated code must compile in Unity, which means C# 9 and no `ConnectNet.Server`. `tests/ConnectNet.Unity.CompileCheck` pins this on every build.
 
 The generated code for each service has four parts:
 
@@ -117,9 +120,9 @@ zero-allocation; what remains is HttpClient / ASP.NET Core framework-internal al
 rather than dropping to a custom transport, which would forfeit compatibility with `IHttpClientFactory`,
 Polly, and OpenTelemetry instrumentation.
 
-`JsonCodec` cannot process UTF-8 directly because Google.Protobuf's `JsonParser` / `JsonFormatter` only
-expose string-based APIs, so JSON is accepted as the slower path. The API boundary is
-`ReadOnlyMemory<byte>`, so the internals can be swapped if a UTF-8 API becomes available.
+`JsonCodec` reads and writes UTF-8 directly through the generated `.connect-json.cs` code. Messages without it, and the shapes the generator leaves out (well-known types inside repeated or map fields, `NullValue`), go through Google.Protobuf's string-based `JsonParser` / `JsonFormatter`, which is the slower path.
+
+Response compression is opt-in through `ConnectServerOptions.CompressMinBytes`: it spends CPU on every message whether or not the data shrinks, and only the application knows its payloads.
 
 ## Testing
 

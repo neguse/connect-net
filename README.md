@@ -86,6 +86,22 @@ Console.WriteLine(response.Message); // Hello World!
 
 ### Client (Unity)
 
+The steps below were run on Unity 6000.3 with the Mono and IL2CPP scripting backends.
+
+1. Build the client and its dependencies, then copy every DLL into `Assets/Plugins`:
+
+   ```bash
+   dotnet publish src/ConnectNet.Client -c Release -o out
+   ```
+
+2. Generate the code and copy all three files into `Assets`. `<Service>Definition` is the server's and is compiled out in Unity.
+
+   ```bash
+   protoc --csharp_out=. --connect-csharp_out=. greeter.proto
+   ```
+
+3. Call the service:
+
 ```csharp
 // HTTP/1.1 (default): works with Unity's built-in HTTP stack
 // Supports: Unary, Server Streaming
@@ -107,11 +123,11 @@ var channel = ConnectChannel.ForAddress("https://api.example.com", new ConnectCh
 var client = new GreeterServiceClient(channel);
 ```
 
-YAHA requires building its native Rust library for your target platform. See the [YAHA documentation](https://github.com/Cysharp/YetAnotherHttpHandler) for build instructions.
+Install YAHA by following its [documentation](https://github.com/Cysharp/YetAnotherHttpHandler). It ships native libraries for the platforms it supports.
 
 #### Unity WebGL
 
-Unity WebGL builds cannot use `SocketsHttpHandler`. Use the bundled `UnityWebRequestHandler`, which is backed by `UnityWebRequest` and supports Unary and Server Streaming over HTTP/1.1:
+Unity WebGL builds cannot use `SocketsHttpHandler`. Use `UnityWebRequestHandler`, which is backed by `UnityWebRequest` and supports Unary and Server Streaming. It depends on `UnityEngine`, so it is not in `ConnectNet.Client.dll`: copy `src/ConnectNet.Client/UnityWebRequestHandler.cs` into `Assets`.
 
 ```csharp
 var channel = ConnectChannel.ForAddress("https://api.example.com", new ConnectChannelOptions { HttpHandler = new UnityWebRequestHandler() });
