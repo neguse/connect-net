@@ -31,6 +31,10 @@ jobs:
         with:
           go-version: stable
 
+      - name: Generator tests
+        working-directory: tools/protoc-gen-connect-csharp
+        run: go test ./...
+
       - name: Build
         run: dotnet build connect-net.slnx
 
