@@ -21,7 +21,7 @@ only skips an unsupported feature; it must not suppress malformed rules, invalid
 types, compilation failures, or exhausted evaluation budgets.
 
 The interceptor validates unary requests and returns `InvalidArgument` with a
-`buf.validate.Violations` detail. Streaming interception is outside this change.
+`buf.validate.Violations` detail. Streaming requests are not intercepted.
 Standalone validation remains available on the server runtime. `Buf.Validate`
 generated types continue to belong to this assembly so callers do not acquire a
 second, incompatible copy of the extension types.
@@ -47,8 +47,8 @@ follow CEL rather than C# coercion rules. `has()` uses descriptor presence seman
 Comprehension macros have lexical bindings that cannot leak into an outer scope.
 
 Regular expressions use RE2 syntax and semantics, including ASCII shorthand
-classes. The existing RE2 translation is the starting point; .NET regex behavior
-alone is not a compatibility oracle. Unsupported syntax fails at compilation.
+classes. .NET regex behavior alone is not a compatibility oracle. Unsupported
+syntax fails at compilation.
 
 Descriptors are compiled into message plans. The cache is keyed by descriptor
 identity and does not permanently root dynamically loaded descriptors. Recursive
@@ -103,8 +103,7 @@ The compatibility baselines are immutable upstream revisions:
 - Protovalidate: `bufbuild/protovalidate@3807e3d1c38b48295eae269e2f3b97cee668edd3`.
 
 Conformance tooling obtains its schemas and test corpus from these upstream
-revisions, with their license notices. It must not use Celly's implementation or
-its expected results. The CEL harness exercises the official suite with the
+revisions, with their license notices. The CEL harness exercises the official suite with the
 environment requested by each test; alternate enum modes are explicit. The
 Protovalidate executor speaks the official binary stdin/stdout harness protocol.
 
@@ -151,29 +150,10 @@ The same pinned conformance commands run in CI, including strict comparisons.
 Unit tests cover each layer as it is introduced rather than relying on the final
 integration suite to discover elementary failures.
 
-## Delivery and replacement
+## Release
 
-The review units are a dependent series:
-
-1. This design and its acceptance contract.
-2. Server target, lexical analysis, syntax tree, parser and macro expansion.
-3. Type checking, name resolution and diagnostics.
-4. Value model, evaluator, standard operations and functions.
-5. Protobuf type and value adaptation.
-6. Protovalidate functions and RE2 compatibility.
-7. Descriptor plans, standard/custom rule evaluation and interceptor integration.
-8. Remaining conformance differences, resource-boundary verification and CI gates.
-
-Each implementation unit includes its tests. Existing handwritten rule evaluators
-are removed as the CEL-backed validator replaces them; no second production
-validation backend or investigation prototype remains in the final package.
-Public API compatibility does not require retaining nonconforming rule IDs or
-messages. Migration documentation names those observable changes and the server
-runtime requirement.
-
-The release boundary is a green, reviewable PR series. Merging and package
-publication belong to the repository owner. After publication, the package smoke
-application and strict conformance runner are executed against the published
+Package publication belongs to the repository owner. After publication, the package
+smoke application and strict conformance runner are executed against the published
 version, not a project reference. A consumer can roll back by pinning the preceding
-package version; source rollback reverts the implementation series in reverse
-dependency order. No persistent data migration is involved.
+package version. No persistent data migration is involved. Observable changes from
+the handwritten evaluators are listed in [validation-migration.md](validation-migration.md).

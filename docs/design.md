@@ -40,7 +40,7 @@ because Go's protobuf library is best suited to driving the plugin API.
 | `src/ConnectNet.Validation` | protovalidate implementation (see [validation-design.md](validation-design.md)) |
 | `tools/protoc-gen-connect-csharp` | Service stub code generation plugin (Go) |
 
-Dependency direction: `ConnectNet.Client` / `ConnectNet.Server` → `ConnectNet` → Google.Protobuf only.
+Dependency direction: `ConnectNet.Client` / `ConnectNet.Server` → `ConnectNet`. `ConnectNet` depends on Google.Protobuf, System.Text.Json and System.IO.Pipelines; `ConnectNet.Client` adds Microsoft.Bcl.AsyncInterfaces.
 The client side stays on .NET Standard 2.1 for Unity compatibility; only the server side depends on ASP.NET Core.
 
 ## Code generation
@@ -115,8 +115,9 @@ entries (protobuf Any).
 ## Performance
 
 Hot paths (serialization, compression, enveloping, HTTP bodies) avoid intermediate `byte[]` allocations via
-`Pooling/ArrayPoolBufferWriter` and `PooledMemoryHttpContent`. The codec layer itself is effectively
-zero-allocation; what remains is HttpClient / ASP.NET Core framework-internal allocation. We accept that
+`Pooling/ArrayPoolBufferWriter` and `PooledMemoryHttpContent`. Writing through the codec layer does not
+allocate, and reading allocates the decoded message; what remains is HttpClient / ASP.NET Core
+framework-internal allocation. We accept that
 rather than dropping to a custom transport, which would forfeit compatibility with `IHttpClientFactory`,
 Polly, and OpenTelemetry instrumentation.
 
@@ -131,6 +132,10 @@ Response compression is opt-in through `ConnectServerOptions.CompressMinBytes`: 
 | `tests/ConnectNet.Tests` | Unit tests (including in-process HTTP via `TestServer`) |
 | `tests/ConnectNet.IntegrationTests` | Interop tests against the connect-go implementation |
 | `tests/ConnectNet.Conformance` | Harness for the official [connectrpc/conformance](https://github.com/connectrpc/conformance) suite (client and server modes; 100% pass is maintained) |
+| `tests/ConnectNet.Cel.Conformance` | The CEL engine against the pinned cel-spec corpus |
+| `tests/ConnectNet.Protovalidate.Conformance` | The validator against the pinned Protovalidate suite |
+| `tests/ConnectNet.Validation.Smoke` | Consumes the packed `ConnectNet.Validation` package from a separate application |
+| `tests/ConnectNet.Unity.CompileCheck` | Compiles the client's generated code under Unity's constraints |
 | `tests/ConnectNet.Benchmarks` | Allocation measurements with BenchmarkDotNet |
 
 The conformance run procedure (fetching connectconformance, `config.yaml`, launch commands) is kept in
