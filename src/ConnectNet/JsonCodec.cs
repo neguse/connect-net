@@ -116,5 +116,11 @@ public class JsonCodec : ICodec
         {
             throw new FormatException(ex.Message, ex);
         }
+        // Unity WebGL strips System.Text.Json's messages, so building its exception for malformed
+        // input fails with an ArgumentNullException from string.Format.
+        catch (ArgumentException ex)
+        {
+            throw new FormatException(ex.Message, ex);
+        }
     }
 }

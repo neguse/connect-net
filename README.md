@@ -86,7 +86,7 @@ Console.WriteLine(response.Message); // Hello World!
 
 ### Client (Unity)
 
-The steps below were run on Unity 6000.3 with the Mono and IL2CPP scripting backends.
+The steps below were run on Unity 6000.3 with the Mono and IL2CPP scripting backends on Linux, and on WebGL.
 
 1. Build the client and its dependencies, then copy every DLL into `Assets/Plugins`:
 

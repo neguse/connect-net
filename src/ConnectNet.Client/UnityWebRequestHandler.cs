@@ -47,11 +47,11 @@ namespace ConnectNet.Client
                 }
             }
 
-            var tcs = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var tcs = NewCompletionSource();
 
             // Hook cancellation outside the executor so a cancel that arrives before the
             // request is even posted still fails the awaiter instead of hanging forever.
-            using var ctRegistration = cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+            using var ctRegistration = cancellationToken.Register(() => Complete(tcs, t => t.TrySetCanceled(cancellationToken)));
 
             // Must run on Unity main thread.
             var syncContext = SynchronizationContext.Current;
@@ -71,6 +71,36 @@ namespace ConnectNet.Client
             }
 
             return await tcs.Task.ConfigureAwait(false);
+        }
+
+        private static TaskCompletionSource<HttpResponseMessage> NewCompletionSource()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return new TaskCompletionSource<HttpResponseMessage>();
+#else
+            return new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+#endif
+        }
+
+        // WebGL has no thread pool. The continuations of ConfigureAwait(false) awaits, here and in
+        // HttpClient, run inline only when no SynchronizationContext is current; otherwise they
+        // are queued to the pool and never run. The caller's own await still resumes on its context.
+        private static void Complete(TaskCompletionSource<HttpResponseMessage> tcs, Action<TaskCompletionSource<HttpResponseMessage>> complete)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            var context = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(null);
+            try
+            {
+                complete(tcs);
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(context);
+            }
+#else
+            complete(tcs);
+#endif
         }
 
         private static async Task ExecuteRequestAsync(
@@ -125,21 +155,19 @@ namespace ConnectNet.Client
 
                 using var abortRegistration = ct.Register(static state => ((UnityWebRequest?)state)?.Abort(), uwr);
 
+                // Wait on the completion callback rather than polling with Task.Yield, whose
+                // continuation could be queued to a thread pool that WebGL does not have.
                 var op = uwr.SendWebRequest();
-                while (!op.isDone)
+                if (!op.isDone)
                 {
-                    if (ct.IsCancellationRequested)
-                    {
-                        // Cancellation already aborted the request via the registration above;
-                        // bail out of the wait loop so we don't spin.
-                        break;
-                    }
-                    await Task.Yield();
+                    var done = new TaskCompletionSource<bool>();
+                    op.completed += _ => done.TrySetResult(true);
+                    await done.Task;
                 }
 
                 if (ct.IsCancellationRequested)
                 {
-                    tcs.TrySetCanceled(ct);
+                    Complete(tcs, t => t.TrySetCanceled(ct));
                     return;
                 }
 
@@ -156,8 +184,8 @@ namespace ConnectNet.Client
                     && (uwr.result == UnityWebRequest.Result.ConnectionError
                         || uwr.result == UnityWebRequest.Result.DataProcessingError))
                 {
-                    tcs.TrySetException(new HttpRequestException(
-                        $"UnityWebRequest failed ({uwr.result}): {uwr.error}"));
+                    Complete(tcs, t => t.TrySetException(new HttpRequestException(
+                        $"UnityWebRequest failed ({uwr.result}): {uwr.error}")));
                     return;
                 }
 
@@ -193,11 +221,11 @@ namespace ConnectNet.Client
                     }
                 }
 
-                tcs.TrySetResult(response);
+                Complete(tcs, t => t.TrySetResult(response));
             }
             catch (Exception ex)
             {
-                tcs.TrySetException(ex);
+                Complete(tcs, t => t.TrySetException(ex));
             }
             finally
             {
