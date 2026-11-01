@@ -43,13 +43,14 @@ public class ConnectServerOptions
     /// </summary>
     public bool RequireConnectProtocolHeader { get; set; } = false;
 
-    /// <summary>The default value of <see cref="CompressMinBytes"/>.</summary>
-    public const int DefaultCompressMinBytes = 1024;
+    /// <summary>The default value of <see cref="CompressMinBytes"/>: responses are never compressed.</summary>
+    public const int DefaultCompressMinBytes = int.MaxValue;
 
     /// <summary>
     /// Responses smaller than this many bytes are sent uncompressed even when the client
-    /// accepts compression. Compressing a small message costs more CPU than the bandwidth it
-    /// saves and can make the message larger. Set to 0 to consider every message.
+    /// accepts compression. Compression is opt-in: it spends CPU on every message, whether or
+    /// not the data shrinks, and only the application knows whether its payloads are worth it.
+    /// Set to 0 to consider every message; small messages can grow when compressed.
     /// </summary>
     public int CompressMinBytes { get; set; } = DefaultCompressMinBytes;
 
