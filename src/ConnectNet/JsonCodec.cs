@@ -135,4 +135,13 @@ public class JsonCodec : ICodec
         public Memory<byte> GetMemory(int sizeHint = 0) => throw new InvalidOperationException();
         public Span<byte> GetSpan(int sizeHint = 0) => throw new InvalidOperationException();
     }
+
+    // Resetting a writer to a Stream allocates a buffer for it; a shared IBufferWriter does not.
+    private sealed class NoDestination : IBufferWriter<byte>
+    {
+        public static readonly NoDestination Instance = new();
+        public void Advance(int count) => throw new InvalidOperationException();
+        public Memory<byte> GetMemory(int sizeHint = 0) => throw new InvalidOperationException();
+        public Span<byte> GetSpan(int sizeHint = 0) => throw new InvalidOperationException();
+    }
 }

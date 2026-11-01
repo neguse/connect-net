@@ -140,20 +140,18 @@ public static class Envelope
         if (maxLength <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxLength), "maxLength must be positive");
 
-        // Phase 1: wait for the 5-byte header to land in the buffer.
-        ReadResult result;
-        byte flags;
-        uint payloadLength;
+        // Nothing is consumed or rented until the whole frame is in the pipeline's own buffers:
+        // the length prefix alone must not size an allocation.
         while (true)
         {
-            result = await reader.ReadAsync(ct).ConfigureAwait(false);
+            var result = await reader.ReadAsync(ct).ConfigureAwait(false);
             var buffer = result.Buffer;
             if (buffer.Length >= 5)
             {
                 Span<byte> headerSpan = stackalloc byte[5];
                 buffer.Slice(0, 5).CopyTo(headerSpan);
-                flags = headerSpan[0];
-                payloadLength = ((uint)headerSpan[1] << 24) | ((uint)headerSpan[2] << 16) | ((uint)headerSpan[3] << 8) | headerSpan[4];
+                var flags = headerSpan[0];
+                var payloadLength = ((uint)headerSpan[1] << 24) | ((uint)headerSpan[2] << 16) | ((uint)headerSpan[3] << 8) | headerSpan[4];
                 if (payloadLength > (uint)maxLength)
                 {
                     reader.AdvanceTo(buffer.Start, buffer.Start);
@@ -161,55 +159,25 @@ public static class Envelope
                         ConnectCode.ResourceExhausted,
                         $"message size {payloadLength} exceeds limit {maxLength}");
                 }
-                reader.AdvanceTo(buffer.GetPosition(5));
-                break;
-            }
-            if (result.IsCompleted)
-            {
-                if (buffer.Length == 0)
+                if (buffer.Length >= 5 + payloadLength)
                 {
-                    reader.AdvanceTo(buffer.End);
-                    return null;
-                }
-                reader.AdvanceTo(buffer.End);
-                throw new ConnectException(ConnectCode.Internal, "incomplete envelope header");
-            }
-            reader.AdvanceTo(buffer.Start, buffer.End);
-        }
-
-        // Phase 2: wait for the payload.
-        if (payloadLength == 0)
-        {
-            return new EnvelopeFrame(flags, null, 0);
-        }
-
-        // Nothing is rented until the declared payload has actually arrived in the pipeline's
-        // own buffers: the length prefix alone must not size an allocation.
-        while (true)
-        {
-            result = await reader.ReadAsync(ct).ConfigureAwait(false);
-            var buffer = result.Buffer;
-            if (buffer.Length >= payloadLength)
-            {
-                var pooled = ArrayPool<byte>.Shared.Rent((int)payloadLength);
-                try
-                {
-                    var slice = buffer.Slice(0, payloadLength);
-                    slice.CopyTo(pooled.AsSpan(0, (int)payloadLength));
-                    reader.AdvanceTo(buffer.GetPosition((long)payloadLength));
-                    var frame = new EnvelopeFrame(flags, pooled, (int)payloadLength);
-                    pooled = null!; // ownership transferred to frame
-                    return frame;
-                }
-                finally
-                {
-                    if (pooled != null) ArrayPool<byte>.Shared.Return(pooled);
+                    if (payloadLength == 0)
+                    {
+                        reader.AdvanceTo(buffer.GetPosition(5));
+                        return new EnvelopeFrame(flags, null, 0);
+                    }
+                    var pooled = ArrayPool<byte>.Shared.Rent((int)payloadLength);
+                    buffer.Slice(5, payloadLength).CopyTo(pooled);
+                    reader.AdvanceTo(buffer.GetPosition(5 + payloadLength));
+                    return new EnvelopeFrame(flags, pooled, (int)payloadLength);
                 }
             }
             if (result.IsCompleted)
             {
+                var length = buffer.Length;
                 reader.AdvanceTo(buffer.End);
-                throw new ConnectException(ConnectCode.Internal, "incomplete envelope data");
+                if (length == 0) return null;
+                throw new ConnectException(ConnectCode.Internal, length < 5 ? "incomplete envelope header" : "incomplete envelope data");
             }
             reader.AdvanceTo(buffer.Start, buffer.End);
         }
@@ -222,30 +190,46 @@ public static class Envelope
     public static async Task WriteAsync(PipeWriter writer, byte flags, ReadOnlyMemory<byte> data, CancellationToken ct = default)
     {
         if (writer == null) throw new ArgumentNullException(nameof(writer));
-        WriteHeader(writer, flags, data.Length);
-        if (data.Length > 0)
-        {
-            var dest = writer.GetSpan(data.Length);
-            data.Span.CopyTo(dest);
-            writer.Advance(data.Length);
-        }
+        Write(writer, flags, data.Span);
         await FlushAsync(writer, ct).ConfigureAwait(false);
+    }
+
+    internal static void Write(IBufferWriter<byte> writer, byte flags, ReadOnlySpan<byte> data)
+    {
+        var frame = writer.GetSpan(5 + data.Length);
+        FormatHeader(frame, flags, data.Length);
+        data.CopyTo(frame.Slice(5));
+        writer.Advance(5 + data.Length);
     }
 
     internal static void WriteHeader(IBufferWriter<byte> writer, byte flags, int length)
     {
-        var header = writer.GetSpan(5);
+        FormatHeader(writer.GetSpan(5), flags, length);
+        writer.Advance(5);
+    }
+
+    private static void FormatHeader(Span<byte> header, byte flags, int length)
+    {
         header[0] = flags;
         header[1] = (byte)(length >> 24);
         header[2] = (byte)(length >> 16);
         header[3] = (byte)(length >> 8);
         header[4] = (byte)length;
-        writer.Advance(5);
     }
 
-    internal static async Task FlushAsync(PipeWriter writer, CancellationToken ct)
+    internal static Task FlushAsync(PipeWriter writer, CancellationToken ct)
     {
-        var flushResult = await writer.FlushAsync(ct).ConfigureAwait(false);
+        var flush = writer.FlushAsync(ct);
+        if (!flush.IsCompletedSuccessfully) return AwaitFlushAsync(flush, ct);
+        ThrowIfStopped(flush.Result, ct);
+        return Task.CompletedTask;
+    }
+
+    private static async Task AwaitFlushAsync(ValueTask<FlushResult> flush, CancellationToken ct)
+        => ThrowIfStopped(await flush.ConfigureAwait(false), ct);
+
+    private static void ThrowIfStopped(FlushResult flushResult, CancellationToken ct)
+    {
         if (flushResult.IsCanceled) throw new OperationCanceledException(ct);
         // The reader completed (e.g. the peer disconnected): nothing will consume further
         // envelopes, so stop the producer instead of generating frames into the void.

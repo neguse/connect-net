@@ -871,7 +871,8 @@ public sealed class ConnectChannel : IDisposable
     /// </summary>
     internal static ConnectException? ParseEndStream(ReadOnlyMemory<byte> payload, CallOptions? options)
     {
-        if (payload.Length == 0)
+        // "{}" ends every successful stream without trailers and needs no parser.
+        if (payload.Length == 0 || payload.Span.SequenceEqual("{}"u8))
             return null;
 
         using var doc = ConnectException.TryParseJson(payload);
