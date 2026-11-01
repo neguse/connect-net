@@ -12,6 +12,7 @@
     <Project Path="tests/ConnectNet.IntegrationTests/ConnectNet.IntegrationTests.csproj" />
     <Project Path="tests/ConnectNet.Tests.Proto/ConnectNet.Tests.Proto.csproj" />
     <Project Path="tests/ConnectNet.Tests/ConnectNet.Tests.csproj" />
+    <Project Path="tests/ConnectNet.Unity.CompileCheck/ConnectNet.Unity.CompileCheck.csproj" />
     <Project Path="tests/ConnectNet.Conformance.Proto/ConnectNet.Conformance.Proto.csproj" />
     <Project Path="tests/ConnectNet.Conformance/ConnectNet.Conformance.csproj" />
     <Project Path="tests/ConnectNet.Benchmarks/ConnectNet.Benchmarks.csproj" />

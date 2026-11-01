@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Compiles generated code the way a Unity project does: C# 9, no ConnectNet.Server. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <DefineConstants>$(DefineConstants);UNITY_2021_3_OR_NEWER</DefineConstants>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.*" />
+    <PackageReference Include="Grpc.Tools" Version="2.*" PrivateAssets="All" />
+    <Protobuf Include="../ConnectNet.Tests.Proto/greeter.proto" ProtoRoot="../ConnectNet.Tests.Proto" GrpcServices="None" />
+    <Protobuf Include="../ConnectNet.Tests.Proto/json_mapping.proto" ProtoRoot="../ConnectNet.Tests.Proto" GrpcServices="None" />
+    <Compile Include="../ConnectNet.Tests.Proto/GreeterService.connect.cs" />
+    <Compile Include="../ConnectNet.Tests.Proto/json_mapping.connect-json.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ConnectNet/ConnectNet.csproj" />
+    <ProjectReference Include="../../src/ConnectNet.Client/ConnectNet.Client.csproj" />
+  </ItemGroup>
+</Project>
