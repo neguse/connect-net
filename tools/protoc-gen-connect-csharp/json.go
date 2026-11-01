@@ -139,9 +139,10 @@ func generateJSONMembers(p func(string, ...interface{}), message *protogen.Messa
 			p("writer.WriteEndObject();")
 		case field.Desc.IsList():
 			p("writer.WriteStartArray();")
-			p("foreach (var item in this.%s)", prop)
+			// RepeatedField's enumerator is a heap object; indexing allocates nothing.
+			p("for (var i = 0; i < this.%s.Count; i++)", prop)
 			p("{")
-			p("%s", jsonWriteValue(field.Desc, "item", enumIndex))
+			p("%s", jsonWriteValue(field.Desc, fmt.Sprintf("this.%s[i]", prop), enumIndex))
 			p("}")
 			p("writer.WriteEndArray();")
 		default:

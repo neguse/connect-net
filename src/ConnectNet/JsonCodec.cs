@@ -1,6 +1,5 @@
 using System;
 using System.Buffers;
-using System.IO;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -58,12 +57,16 @@ public class JsonCodec : ICodec
         if (destination == null) throw new ArgumentNullException(nameof(destination));
         if (message is IConnectJsonMessage generated)
         {
-            var writer = t_writer ??= new Utf8JsonWriter(Stream.Null, WriterOptions);
+            // Lease roughly what the JSON will need up front: bytes grow by a third in base64, and
+            // starting small would make a pooled destination regrow and copy several times.
+            var encodedSize = message.CalculateSize();
+            destination.GetMemory(encodedSize + encodedSize / 2);
+            var writer = t_writer ??= new Utf8JsonWriter(NoDestination.Instance, WriterOptions);
             writer.Reset(destination);
             generated.WriteJson(writer, _formatter);
             writer.Flush();
             // Drop the reference so a cached writer never keeps the destination alive.
-            writer.Reset(Stream.Null);
+            writer.Reset(NoDestination.Instance);
             return;
         }
         // Without generated code, JsonFormatter only produces strings; we must encode to UTF-8 once.
@@ -122,5 +125,14 @@ public class JsonCodec : ICodec
         {
             throw new FormatException(ex.Message, ex);
         }
+    }
+
+    // Resetting a writer to a Stream allocates a buffer for it; a shared IBufferWriter does not.
+    private sealed class NoDestination : IBufferWriter<byte>
+    {
+        public static readonly NoDestination Instance = new();
+        public void Advance(int count) => throw new InvalidOperationException();
+        public Memory<byte> GetMemory(int sizeHint = 0) => throw new InvalidOperationException();
+        public Span<byte> GetSpan(int sizeHint = 0) => throw new InvalidOperationException();
     }
 }
