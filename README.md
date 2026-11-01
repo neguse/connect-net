@@ -540,7 +540,7 @@ connect-net passes **100%** of the [connectrpc/conformance](https://github.com/c
 
 `ConnectNet.Validation` passes every case of the pinned [protovalidate](https://github.com/bufbuild/protovalidate)
 conformance suite (2,872 cases, strict error and message comparison) and every required file of the
-pinned [cel-spec](https://github.com/google/cel-spec) corpus (1,958 cases); both run in CI.
+pinned [cel-spec](https://github.com/cel-expr/cel-spec) corpus (1,958 cases); both run in CI.
 
 ## Known issues
 
